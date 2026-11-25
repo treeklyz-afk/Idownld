@@ -124,7 +124,7 @@ fun PyServerMediaApp() {
 
     val workingState = remember { mutableStateOf(false) }
     val loaderTitleState = remember { mutableStateOf("Analyzing media...") }
-    val statusMsgState = remember { mutableStateOf("Direct media URLs supported; native capabilities are shown from this APK") }
+    val statusMsgState = remember { mutableStateOf("Bundled yt-dlp can analyze supported sites and direct media URLs") }
     val logsState = remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(line: String) {
@@ -241,7 +241,7 @@ fun PyServerMediaApp() {
                                 OutlinedTextField(
                                     value = mediaUrlState.value,
                                     onValueChange = { mediaUrlState.value = it },
-                                    label = { Text("Paste a direct media-file URL (MP4, WebM, MP3, GIF)") },
+                                    label = { Text("Paste a supported video-site or media URL") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -408,7 +408,7 @@ fun PyServerMediaApp() {
                                     loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, mediaUrlState.value, fmt, false) { appendLog(it) }
+                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, fmt.sourceUrl ?: mediaUrlState.value, fmt, false) { appendLog(it) }
                                             else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), false) { appendLog(it) }
                                         }
                                         workingState.value = false
@@ -479,6 +479,13 @@ fun PyServerMediaApp() {
                                 nativeReportState.value?.ffmpegOutput?.takeIf { it.isNotBlank() }?.let {
                                     Text(it, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 }
+                                nativeReportState.value?.ffprobeOutput?.takeIf { it.isNotBlank() }?.let {
+                                    Text("FFprobe JNI check:\n$it", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                }
+                                Text(
+                                    "Bundled extractor: CPython 3.13, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0, Jsoup 1.24.1. QuickJS is not included; YouTube EJS challenges may therefore fail. Site availability varies.",
+                                    color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall
+                                )
                             }
                         }
                     }
@@ -510,7 +517,7 @@ fun PyServerMediaApp() {
                     }
                     item {
                         Text(
-                            "GPL codecs x264/x265 are omitted. FDK-AAC is excluded pending licensing and patent clearance. Python, yt-dlp, aria2, Deno and Node are not included in this runtime.",
+                            "x264/x265 GPL encoders are not included in this LGPL build; FDK-AAC is excluded pending licensing and patent review. FFmpegKit's JNI API is bundled, but yt-dlp uses only muxed single-file video formats here because an FFmpeg CLI adapter is not bundled. QuickJS is not included, so full YouTube EJS challenge solving is not promised.",
                             color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -605,7 +612,7 @@ fun PyServerMediaApp() {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    "Starting the service first checks the Bearer token against the protected /api/bridge/next-job endpoint. Gateway jobs can download direct media URLs; this APK does not include website or playlist extractors.",
+                                    "Starting the service verifies the Bearer token against /api/bridge/next-job before polling. Background jobs can use bundled yt-dlp for supported site URLs and playlists. YouTube EJS may fail because QuickJS is not bundled.",
                                     color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall
                                 )
                                 OutlinedButton(

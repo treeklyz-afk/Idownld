@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.chaquo.python")
 }
 
 android {
@@ -12,8 +13,8 @@ android {
         applicationId = "com.pyserver.v2"
         minSdk = 29
         targetSdk = 35
-        versionCode = 7
-        versionName = "2.5.0"
+        versionCode = 8
+        versionName = "2.6.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -26,6 +27,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -42,6 +44,18 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jsoup:jsoup:1.24.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // APK-bundled native FFmpeg/JNI runtime. Keep pinned; executable codec updates are full APK updates.
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
+}
+chaquopy {
+    defaultConfig {
+        version = "3.13"
+        buildPython("python3.13")
+        pip {
+            install("yt-dlp==2026.11.23")
+            install("yt-dlp-ejs==0.8.0")
+        }
+    }
 }

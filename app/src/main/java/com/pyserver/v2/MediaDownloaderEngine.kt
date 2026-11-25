@@ -1,6 +1,7 @@
 package com.pyserver.v2
 
 import android.content.Context
+import org.jsoup.Jsoup
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
@@ -8,11 +9,12 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.TimeUnit
 
- data class FormatChoice(
+data class FormatChoice(
     val formatId: String,
     val titleLabel: String,
     val mediaType: String,
-    val metaInfo: String
+    val metaInfo: String,
+    val sourceUrl: String? = null
 )
 
 data class MediaEntry(
@@ -47,14 +49,54 @@ object MediaDownloaderEngine {
             return Result.failure(IllegalArgumentException("Only HTTP and HTTPS URLs are supported"))
         }
 
-        return nativeAnalyzeFallback(url)
+        val direct = nativeAnalyzeFallback(url)
+        if (direct.isSuccess) return direct
+        return try {
+            Result.success(parseYtDlpJson(YtDlpRuntime.analyze(context, url)))
+        } catch (e: Exception) {
+            jsoupAnalyzeFallback(url).recoverCatching { fallbackError ->
+                throw IllegalStateException("yt-dlp failed (${e.message ?: "extractor error"}); static HTML fallback found no direct media (${fallbackError.message ?: "no video metadata"})")
+            }
+        }
+    }
+
+    private fun jsoupAnalyzeFallback(url: String): Result<MediaAnalysis> = runCatching {
+        val document = Jsoup.connect(url)
+            .userAgent("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/124 Mobile Safari/537.36")
+            .timeout(15000)
+            .followRedirects(true)
+            .get()
+        val candidates = listOf(
+            "meta[property=og:video:secure_url]" to "content",
+            "meta[property=og:video]" to "content",
+            "meta[name=twitter:player:stream]" to "content",
+            "video source[src]" to "abs:src",
+            "video[src]" to "abs:src"
+        )
+        val mediaUrl = candidates.asSequence()
+            .map { (selector, attribute) -> document.selectFirst(selector)?.attr(attribute).orEmpty() }
+            .firstOrNull { candidate -> candidate.startsWith("https://") || candidate.startsWith("http://") }
+            ?: throw IllegalStateException("No static video/audio source was present")
+        val title = document.selectFirst("meta[property=og:title]")?.attr("content")
+            ?.takeIf { it.isNotBlank() } ?: document.title().ifBlank { "Web video" }
+        val mediaType = when {
+            mediaUrl.substringBefore('?').substringBefore('#').endsWith(".mp3", true) -> "audio"
+            mediaUrl.substringBefore('?').substringBefore('#').endsWith(".m4a", true) -> "audio"
+            else -> "video"
+        }
+        MediaAnalysis(
+            title = title.take(240),
+            extractor = "Static HTML metadata",
+            duration = "Direct source metadata",
+            formats = listOf(FormatChoice("direct", "Direct media source", mediaType, "Found in Open Graph/video HTML metadata; JavaScript pages may not work", mediaUrl))
+        )
     }
 
     private fun parseYtDlpJson(raw: String): MediaAnalysis {
         val root = JSONObject(raw.trim())
         val formatsJson = root.optJSONArray("formats")
         val formats = ArrayList<FormatChoice>()
-        formats += FormatChoice("best", "Best available (auto merge)", "video", "yt-dlp selects compatible streams")
+        formats += FormatChoice("best", "Best single-file video", "video", "Uses a muxed source; this build does not run FFmpeg CLI merges")
         val seen = mutableSetOf<String>()
         if (formatsJson != null) {
             for (i in 0 until formatsJson.length()) {
@@ -68,7 +110,7 @@ object MediaDownloaderEngine {
                 val size = item.optLong("filesize", item.optLong("filesize_approx", -1L))
                 val sizeText = if (size > 0L) " • ${size / (1024 * 1024)} MB" else ""
                 val label = when {
-                    vcodec != "none" && height > 0 -> "${height}p • $ext${if (fps > 0) " • ${fps}fps" else ""}$sizeText"
+                    vcodec != "none" && acodec != "none" -> "${if (height > 0) "${height}p" else "Video"} • $ext${if (fps > 0) " • ${fps}fps" else ""}$sizeText"
                     else -> continue
                 }
                 if (seen.add("$label|$id")) {
@@ -77,7 +119,7 @@ object MediaDownloaderEngine {
                         id,
                         label,
                         "video",
-                        if (isCombined) "Video and audio stream $id" else "Video stream $id; yt-dlp will try to merge audio"
+                        if (isCombined) "Video and audio stream $id" else "Video stream $id"
                     )
                 }
             }
@@ -118,10 +160,6 @@ object MediaDownloaderEngine {
             return Result.failure(IllegalArgumentException("Only HTTP and HTTPS media URLs are supported"))
         }
         val host = parsed.host.lowercase()
-        if (host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be" || host.endsWith(".youtu.be")) {
-            return Result.failure(IllegalStateException("This APK does not yet bundle yt-dlp. Site/playlist analysis will be available after a compatible signed APK includes the extractor runtime."))
-        }
-
         return try {
             val conn = (parsed.openConnection() as HttpURLConnection).apply {
                 requestMethod = "HEAD"
@@ -137,7 +175,7 @@ object MediaDownloaderEngine {
             conn.disconnect()
             if (code !in 200..299) return Result.failure(IllegalStateException("Media server returned HTTP $code"))
             if (contentType == "text/html" || contentType.contains("mpegurl") || finalUrl.substringBefore('?').endsWith(".m3u8", true)) {
-                return Result.failure(IllegalStateException("This page/playlist needs yt-dlp, which is not bundled in this APK yet."))
+                return Result.failure(IllegalStateException("This URL is a webpage or playlist; yt-dlp will try site extraction."))
             }
             val path = finalUrl.substringBefore('?').substringAfterLast('/').lowercase()
             val ext = path.substringAfterLast('.', "")
@@ -176,7 +214,12 @@ object MediaDownloaderEngine {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL empty"))
         if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog)
-        return Result.failure(IllegalStateException("yt-dlp is not bundled in this APK yet. Direct media-file downloads remain available; site extraction requires a compatible signed APK update."))
+        return try {
+            onLog("Downloading with APK-bundled yt-dlp...")
+            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId), choice.mediaType)
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException("yt-dlp download failed: ${e.message ?: "unknown error"}"))
+        }
     }
 
     /** selectedIndices=null downloads the entire collection; otherwise only the chosen preview items. */
@@ -194,7 +237,31 @@ object MediaDownloaderEngine {
         if (choice.formatId == "direct") {
             return Result.failure(IllegalArgumentException("Direct media URLs do not contain a selectable playlist"))
         }
-        return Result.failure(IllegalStateException("Playlist downloads need yt-dlp, which is not bundled in this APK yet. A compatible signed APK update is required."))
+        return try {
+            onLog("Downloading collection with APK-bundled yt-dlp...")
+            publishYtDlpFiles(
+                context,
+                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true),
+                choice.mediaType
+            )
+        } catch (e: Exception) {
+            Result.failure(IllegalStateException("yt-dlp playlist download failed: ${e.message ?: "unknown error"}"))
+        }
+    }
+
+    private fun publishYtDlpFiles(context: Context, files: List<File>, defaultType: String): Result<String> {
+        val saved = ArrayList<String>()
+        for (file in files) {
+            val type = when (file.extension.lowercase()) {
+                "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac" -> "audio"
+                "gif" -> "gif"
+                else -> defaultType
+            }
+            val result = MediaStoreDownloads.publish(context, file, type)
+            if (result.isFailure) return Result.failure(result.exceptionOrNull() ?: IllegalStateException("Could not save media"))
+            saved += result.getOrThrow()
+        }
+        return Result.success(if (saved.size == 1) "Saved to ${saved.single()}" else "Saved ${saved.size} files:\n${saved.joinToString("\n")}")
     }
 
     private fun nativeStreamDownload(

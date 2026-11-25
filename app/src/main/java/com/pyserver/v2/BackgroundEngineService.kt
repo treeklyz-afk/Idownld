@@ -87,11 +87,23 @@ class BackgroundEngineService : Service() {
                     val jobId = obj.getString("job_id")
                     val url = obj.getString("url")
                     val type = obj.optString("media_type", "video")
-                    updateNotification("Downloading direct media through the app runtime")
-                    val res = MediaDownloaderEngine.downloadMedia(
-                        this,
-                        url,
-                        FormatChoice("direct", "Direct source", type, "Gateway direct-media job")
+                    updateNotification("Analyzing gateway URL with bundled yt-dlp")
+                    val analysis = MediaDownloaderEngine.analyzeUrl(this, url)
+                    val res: Result<String> = analysis.fold(
+                        onSuccess = { info ->
+                            val choice = if (type.equals("audio", ignoreCase = true)) {
+                                info.formats.firstOrNull { it.mediaType == "audio" }
+                            } else {
+                                info.formats.firstOrNull { it.formatId == "best" }
+                                    ?: info.formats.firstOrNull { it.mediaType == "video" }
+                            }
+                            when {
+                                choice == null -> Result.failure(IllegalStateException("No compatible format was found for this gateway job"))
+                                info.entries.isNotEmpty() -> MediaDownloaderEngine.downloadPlaylist(this, url, choice, null)
+                                else -> MediaDownloaderEngine.downloadMedia(this, choice.sourceUrl ?: url, choice)
+                            }
+                        },
+                        onFailure = { Result.failure(it) }
                     )
                     sendCompletion(jobId, res.isSuccess, res.getOrElse { it.message ?: "Error" })
                     updateNotification("Gateway service active; next check in a few seconds")

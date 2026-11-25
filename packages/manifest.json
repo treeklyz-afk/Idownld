@@ -1,94 +1,211 @@
 {
   "schemaVersion": 2,
-  "catalogVersion": 5,
-  "updatedAtUtc": "2026-11-25T10:05:00Z",
+  "catalogVersion": 6,
+  "updatedAtUtc": "2026-11-25T11:10:00Z",
   "runtime": {
     "applicationId": "com.pyserver.v2",
     "targetSdk": 35,
-    "delivery": "signed-apk-only",
-    "status": "ffmpegkit-native-aar-pinned",
-    "note": "The pinned FFmpegKit full LGPL AAR is included in APK builds for arm64-v8a and x86_64. This library list distinguishes standalone .so files from FFmpeg features that may be statically linked; the runtime screen probes feature availability. No executable package downloads are offered."
+    "delivery": "APK-bundled",
+    "status": "embedded-cpython-ytdlp-and-lgpl-ffmpeg",
+    "note": "CPython, yt-dlp, yt-dlp-ejs and Jsoup are pinned build dependencies packaged into the APK. No app runtime package downloads are performed. EJS challenge solving requires a compatible JavaScript runtime that is not yet bundled. FFmpeg/FFprobe JNI are provided by the pinned LGPL AAR; a yt-dlp-compatible ffmpeg executable is not provided."
   },
   "nativeMediaRuntime": {
     "coordinate": "dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7",
     "sha256": "c3cbc81d498175fd2aa69ee2dfe7dafbf519052a96283c2568fe5b3b16618456",
-    "license": "LGPL-3.0 (artifact metadata); FFmpeg and bundled component notices are shipped with the AAR and copied under app/src/main/assets/ffmpegkit-licenses/",
-    "abis": ["arm64-v8a", "x86_64"],
+    "license": "LGPL-3.0 artifact metadata; see app/src/main/assets/ffmpegkit-licenses/ and THIRD_PARTY_NOTICES.md",
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
     "delivery": "APK-only",
-    "restrictedFeaturesExcluded": ["libx264", "libx265", "libfdk-aac"],
+    "includesFFmpegAndFFprobeJNI": true,
+    "ytDlpMergeAdapter": false,
+    "restrictedFeaturesExcluded": [
+      "libx264",
+      "libx265",
+      "libfdk-aac"
+    ],
     "libraries": [
-      {"id": "libavcodec", "bundled": true, "packaging": "shared library"},
-      {"id": "libavformat", "bundled": true, "packaging": "shared library"},
-      {"id": "libavutil", "bundled": true, "packaging": "shared library"},
-      {"id": "libavfilter", "bundled": true, "packaging": "shared library"},
-      {"id": "libswscale", "bundled": true, "packaging": "shared library"},
-      {"id": "libswresample", "bundled": true, "packaging": "shared library"},
-      {"id": "libass", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libx264", "bundled": false, "reason": "GPL build not used"},
-      {"id": "libx265", "bundled": false, "reason": "GPL build not used"},
-      {"id": "libvpx", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libwebp", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libopus", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libmp3lame", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libvorbis", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg feature"},
-      {"id": "libfdk-aac", "bundled": false, "reason": "license and redistribution review incomplete"},
-      {"id": "zlib", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg build option"},
-      {"id": "bzip2", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg build option"},
-      {"id": "liblzma", "bundled": false, "status": "runtime-probed", "packaging": "FFmpeg build option"}
+      {
+        "id": "libavcodec",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libavformat",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libavutil",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libavfilter",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libswscale",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libswresample",
+        "bundled": true,
+        "packaging": "shared library"
+      },
+      {
+        "id": "libass",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libx264",
+        "bundled": false,
+        "reason": "GPL build not used; commercial license not obtained"
+      },
+      {
+        "id": "libx265",
+        "bundled": false,
+        "reason": "GPL build not used; commercial license not obtained"
+      },
+      {
+        "id": "libvpx",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libwebp",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libopus",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libmp3lame",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libvorbis",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg feature"
+      },
+      {
+        "id": "libfdk-aac",
+        "bundled": false,
+        "reason": "license and patent clearance incomplete"
+      },
+      {
+        "id": "zlib",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg build option"
+      },
+      {
+        "id": "bzip2",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg build option"
+      },
+      {
+        "id": "liblzma",
+        "bundled": false,
+        "status": "runtime-probed",
+        "packaging": "FFmpeg build option"
+      }
     ]
   },
   "packages": [
     {
       "id": "python",
-      "name": "Python",
-      "version": "3.14.10",
+      "name": "CPython",
+      "version": "3.13 via Chaquopy 17.2.0",
       "category": "Runtime",
-      "description": "Not included in this APK; no package installer or runtime download is provided.",
-      "bundled": false,
-      "license": "Python-2.0"
+      "description": "Embedded CPython runtime included in APK for arm64-v8a and x86_64.",
+      "bundled": true,
+      "license": "PSF-2.0; included component notices apply"
     },
     {
       "id": "python-yt-dlp",
       "name": "yt-dlp",
       "version": "2026.11.23",
       "category": "Media",
-      "description": "Not included in this APK. Website and playlist extraction are not supported by this build.",
-      "bundled": false,
+      "description": "Python package bundled in APK for supported site extraction, format analysis and downloads; site availability varies. Separate-stream merging is unavailable without an ffmpeg CLI adapter.",
+      "bundled": true,
       "license": "Unlicense"
+    },
+    {
+      "id": "yt-dlp-ejs",
+      "name": "yt-dlp-ejs",
+      "version": "0.8.0",
+      "category": "Media",
+      "description": "EJS challenge solver scripts are bundled; no compatible QuickJS, Deno or Node runtime is included, so challenge solving is not guaranteed.",
+      "bundled": true,
+      "license": "Unlicense plus bundled MIT/ISC components"
+    },
+    {
+      "id": "quickjs",
+      "name": "QuickJS",
+      "version": null,
+      "category": "Runtime",
+      "description": "Not bundled. yt-dlp QuickJS command/runtime integration has not been validated for Android.",
+      "bundled": false,
+      "license": "Not applicable"
+    },
+    {
+      "id": "jsoup",
+      "name": "Jsoup",
+      "version": "1.24.1",
+      "category": "Web parsing",
+      "description": "JVM HTML parsing fallback for static Open Graph and video metadata; does not execute JavaScript.",
+      "bundled": true,
+      "license": "MIT"
     },
     {
       "id": "ffmpeg",
       "name": "FFmpeg",
       "version": "FFmpegKit 8.1.7",
       "category": "Media",
-      "description": "JNI FFmpeg runtime bundled in APK for arm64-v8a and x86_64; optional codec/filter features are probed in-app. GPL codecs are not enabled.",
+      "description": "FFmpeg and FFprobe JNI APIs bundled in APK for arm64-v8a and x86_64; LGPL artifact. No yt-dlp CLI adapter; GPL codecs excluded.",
       "bundled": true,
-      "license": "LGPL-3.0 artifact; see bundled third-party notices"
-    },
-    {
-      "id": "yt-dlp-ejs",
-      "name": "yt-dlp JavaScript support",
-      "version": "0.8.0-1",
-      "category": "Media",
-      "description": "Not included in this APK; extractor support is not available.",
-      "bundled": false,
-      "license": "MIT"
+      "license": "LGPL-3.0 artifact; bundled notices apply"
     },
     {
       "id": "aria2",
       "name": "aria2",
       "version": "1.37.0-3",
       "category": "Networking",
-      "description": "Not included in this APK; direct downloads use the app's built-in HTTP downloader.",
+      "description": "Not included; yt-dlp uses its internal downloader.",
       "bundled": false,
       "license": "GPL-2.0-or-later"
     },
     {
       "id": "deno",
       "name": "Deno",
-      "version": "2.5.6",
+      "version": null,
       "category": "Runtime",
-      "description": "Not included in this APK; there is no bundled JavaScript runtime.",
+      "description": "Not included; no JavaScript challenge runtime is bundled.",
+      "bundled": false,
+      "license": "MIT"
+    },
+    {
+      "id": "node",
+      "name": "Node.js",
+      "version": null,
+      "category": "Runtime",
+      "description": "Not included; no JavaScript challenge runtime is bundled.",
       "bundled": false,
       "license": "MIT"
     }

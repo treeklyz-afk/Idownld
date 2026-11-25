@@ -2,6 +2,7 @@ package com.pyserver.v2
 
 import android.content.Context
 import com.arthenica.ffmpegkit.FFmpegKit
+import com.arthenica.ffmpegkit.FFprobeKit
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
@@ -18,6 +19,7 @@ data class NativeRuntimeReport(
     val available: Boolean,
     val summary: String,
     val ffmpegOutput: String,
+    val ffprobeOutput: String,
     val presentLibraries: List<String>,
     val featureLibraries: List<String>
 )
@@ -89,6 +91,8 @@ object NativeMediaRuntime {
             return session.getAllLogsAsString().trim()
         }
         val version = run("-hide_banner -version")
+        val probeSession = FFprobeKit.execute("-hide_banner -version")
+        val probeVersion = probeSession.getAllLogsAsString().trim()
         val encoders = run("-hide_banner -encoders").lowercase()
         val filters = run("-hide_banner -filters").lowercase()
         val buildConf = run("-hide_banner -buildconf").lowercase()
@@ -111,6 +115,7 @@ object NativeMediaRuntime {
             available = sessionSuccess,
             summary = if (sessionSuccess) "FFmpeg JNI engine loaded from the APK; optional features checked at runtime" else "Could not confirm the FFmpeg JNI engine",
             ffmpegOutput = version.take(5000),
+            ffprobeOutput = probeVersion.take(3000),
             presentLibraries = emptyList(),
             featureLibraries = featureLibraries
         )
@@ -119,6 +124,7 @@ object NativeMediaRuntime {
             available = false,
             summary = "Native engine unavailable: ${e.message ?: e.javaClass.simpleName}",
             ffmpegOutput = "",
+            ffprobeOutput = "",
             presentLibraries = emptyList(),
             featureLibraries = emptyList()
         )
