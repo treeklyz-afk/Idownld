@@ -13,8 +13,8 @@ android {
         applicationId = "com.pyserver.v2"
         minSdk = 29
         targetSdk = 35
-        versionCode = 10
-        versionName = "2.8.0"
+        versionCode = 11
+        versionName = "2.8.1"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }

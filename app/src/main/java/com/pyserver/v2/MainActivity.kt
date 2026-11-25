@@ -40,6 +40,7 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLogStore.install(applicationContext)
         super.onCreate(savedInstanceState)
         setContent { EnhancedPyServerApp() }
     }

@@ -290,7 +290,10 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
             if (info.entries.isNotEmpty() && !fullCollection && selected.isNullOrEmpty()) error("At least one collection item select karein.")
             DownloadQueue.enqueue(context, info.title, source, choice, selected, isPlaylist = info.entries.isNotEmpty(), wifiOnly = wifiOnly, thumbnailUrl = info.thumbnailUrl.orEmpty())
         }.onSuccess { refreshQueue() }
-            .onFailure { downloadMessage = it.message ?: "Queue mein add nahi ho saka" }
+            .onFailure {
+                downloadMessage = "Download queue mein add nahi hua: ${it.message ?: it::class.java.simpleName}"
+                CrashLogStore.recordHandled(context, "Download enqueue", it)
+            }
     }
 
     fun startGateway() {
@@ -455,6 +458,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                         busy = true
                         scope.launch { nativeReport = withContext(Dispatchers.IO) { NativeMediaRuntime.probe() }; busy = false }
                     },
+                    onOpenDiagnostics = { runCatching { context.startActivity(Intent(context, CrashDebugActivity::class.java)) } },
                     nativeBusy = busy
                 )
             }
@@ -655,18 +659,18 @@ private fun FormatsPage(
                 }
             }
         }
-        if (info.entries.isNotEmpty()) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { onDownload(false) }, enabled = selected != null && selectedPlaylistIndices.isNotEmpty(), modifier = Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
-                    Text("Download selected", fontWeight = FontWeight.Bold, maxLines = 1)
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val compact = maxWidth < 390.dp
+            if (info.entries.isNotEmpty()) {
+                if (compact) Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onDownload(false) }, enabled = selected != null && selectedPlaylistIndices.isNotEmpty(), modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) { Text("Download selected", fontWeight = FontWeight.Bold, maxLines = 1) }
+                    OutlinedButton(onClick = { onDownload(true) }, enabled = selected != null, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(16.dp)) { Text("Download full collection", color = Cyan, fontWeight = FontWeight.Bold, maxLines = 1) }
+                } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onDownload(false) }, enabled = selected != null && selectedPlaylistIndices.isNotEmpty(), modifier = Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) { Text("Download selected", fontWeight = FontWeight.Bold, maxLines = 1) }
+                    OutlinedButton(onClick = { onDownload(true) }, enabled = selected != null, modifier = Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) { Text("Full collection", color = Cyan, fontWeight = FontWeight.Bold, maxLines = 1) }
                 }
-                OutlinedButton(onClick = { onDownload(true) }, enabled = selected != null, modifier = Modifier.weight(1f).height(54.dp), shape = RoundedCornerShape(16.dp)) {
-                    Text("Full collection", color = Cyan, fontWeight = FontWeight.Bold, maxLines = 1)
-                }
-            }
-        } else {
-            Button(onClick = { onDownload(false) }, enabled = selected != null, modifier = Modifier.fillMaxWidth().height(54.dp).padding(bottom = 4.dp), shape = RoundedCornerShape(17.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
-                Text("Download selected format", fontWeight = FontWeight.Bold)
+            } else Button(onClick = { onDownload(false) }, enabled = selected != null, modifier = Modifier.fillMaxWidth().height(54.dp).padding(bottom = 4.dp), shape = RoundedCornerShape(17.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
+                Text("Download selected format", fontWeight = FontWeight.Bold, maxLines = 1)
             }
         }
     }
@@ -828,6 +832,7 @@ private fun SettingsPage(
     onStopGateway: () -> Unit,
     nativeReport: NativeRuntimeReport?,
     onProbeNative: () -> Unit,
+    onOpenDiagnostics: () -> Unit,
     nativeBusy: Boolean
 ) {
     val context = LocalContext.current
@@ -877,7 +882,9 @@ private fun SettingsPage(
             }
             Text("Token is verified against the protected gateway before polling. Only use a gateway URL you trust.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
         }
-        SettingsGroup("Libraries & diagnostics", "Bundled runtime status") {
+        SettingsGroup("Libraries & diagnostics", "Bundled runtime and crash report") {
+            OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) { Text("Open crash log / diagnostics", color = Cyan) }
+            Text("Recent unexpected app crashes are saved locally in the diagnostics screen. Logs can include sensitive link data.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
             Text(nativeReport?.summary ?: "Inspect FFmpeg / FFprobe JNI availability in this APK.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = onProbeNative, enabled = !nativeBusy, modifier = Modifier.fillMaxWidth()) { Text(if (nativeBusy) "Checking…" else "Inspect bundled libraries", color = Cyan) }
             nativeReport?.let { report ->
