@@ -26,6 +26,19 @@ object PythonRunner {
         }
     }
 
+    fun loadAnimationConfig(context: Context): JSONObject {
+        return try {
+            val raw = context.assets.open("animations/pulse_anim.json").bufferedReader().use { it.readText() }
+            JSONObject(raw)
+        } catch (_: Exception) {
+            JSONObject().apply {
+                put("fps", 15)
+                put("gif_fps", 12)
+                put("gif_width", 480)
+            }
+        }
+    }
+
     fun findPythonExecutable(context: Context): String? {
         val candidates = listOf(
             File(context.filesDir, "bin/python3"),

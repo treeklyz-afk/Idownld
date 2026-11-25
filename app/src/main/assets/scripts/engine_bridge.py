@@ -48,6 +48,11 @@ def main():
             reverse=True,
         )
         formats.append({
+            "format_id": "gif_clip",
+            "label": "Animated GIF (480w • 12fps)",
+            "media_type": "gif",
+        })
+        formats.append({
             "format_id": "bestaudio",
             "label": "Audio Only (MP3)",
             "media_type": "audio",

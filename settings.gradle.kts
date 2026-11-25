@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "PyServer2Mobile"
+rootProject.name = "PyServer2Studio"
 include(":app")

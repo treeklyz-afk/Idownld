@@ -5,6 +5,12 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -15,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -30,43 +37,58 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PyServerResponsiveApp() }
+        setContent { PyServerAnimatedApp() }
     }
 }
 
 @Composable
-fun PyServerResponsiveApp() {
+fun PyServerAnimatedApp() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    var tab by remember { mutableStateOf(0) }
-    var mediaUrl by remember { mutableStateOf("") }
-    var useAria2 by remember { mutableStateOf(true) }
-    var usePyBridge by remember { mutableStateOf(true) }
-    var analysis by remember { mutableStateOf<MediaAnalysis?>(null) }
-    var selectedFormat by remember { mutableStateOf<FormatChoice?>(null) }
+    val animCfg = remember { PythonRunner.loadAnimationConfig(context) }
+    val scaleMin = animCfg.optDouble("scale_min", 0.96).toFloat()
+    val scaleMax = animCfg.optDouble("scale_max", 1.04).toFloat()
 
-    var manifestUrl by remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
-    var packages by remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    var versionMap by remember { mutableStateOf>(emptyMap()) }
-    var toolStatuses by remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+    val infiniteTransition = rememberInfiniteTransition(label = "pyserver_pulse")
+    val pulseScale = infiniteTransition.animateFloat(
+        initialValue = scaleMin,
+        targetValue = scaleMax,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "badge_scale"
+    )
 
-    var gatewayUrl by remember { mutableStateOf("https://your-gateway.onrender.com") }
-    var apiToken by remember { mutableStateOf("") }
-    var bgActive by remember { mutableStateOf(false) }
+    val tabState = remember { mutableStateOf(0) }
+    val mediaUrlState = remember { mutableStateOf("") }
+    val useAria2State = remember { mutableStateOf(true) }
+    val usePyBridgeState = remember { mutableStateOf(true) }
+    val analysisState = remember { mutableStateOf<MediaAnalysis?>(null) }
+    val selectedFormatState = remember { mutableStateOf<FormatChoice?>(null) }
 
-    var working by remember { mutableStateOf(false) }
-    var statusMsg by remember { mutableStateOf("Booting mobile engine...") }
-    var logs by remember { mutableStateOf(listOf<String>()) }
+    val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
+    val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
+    val versionMapState = remember { mutableStateOf>(emptyMap()) }
+    val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+
+    val gatewayUrlState = remember { mutableStateOf("https://your-gateway.onrender.com") }
+    val apiTokenState = remember { mutableStateOf("") }
+    val bgActiveState = remember { mutableStateOf(false) }
+
+    val workingState = remember { mutableStateOf(false) }
+    val statusMsgState = remember { mutableStateOf("Booting animated engine...") }
+    val logsState = remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(msg: String) {
-        logs = (logs + msg).takeLast(12)
+        logsState.value = (logsState.value + msg).takeLast(12)
     }
 
     fun refreshTools() {
-        toolStatuses = AssetsAndPackageManager.getCoreToolsStatus(context)
-        versionMap = packages.associate {
+        toolStatusesState.value = AssetsAndPackageManager.getCoreToolsStatus(context)
+        versionMapState.value = packagesState.value.associate {
             it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id)
         }
     }
@@ -76,7 +98,7 @@ fun PyServerResponsiveApp() {
             AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
         }
         refreshTools()
-        statusMsg = "Ready • Mobile Responsive Engine"
+        statusMsgState.value = "Ready • GIF + JSON Animation + Engine"
     }
 
     val bgDark = Color(0xFF070A10)
@@ -85,6 +107,11 @@ fun PyServerResponsiveApp() {
     val cyanAccent = Color(0xFF00F0FF)
     val greenOk = Color(0xFF10B981)
     val amberWarn = Color(0xFFF59E0B)
+
+    val statusColor = animateColorAsState(
+        targetValue = if (bgActiveState.value) greenOk else cyanAccent,
+        label = "status_color"
+    )
 
     Scaffold(
         containerColor = bgDark,
@@ -95,21 +122,21 @@ fun PyServerResponsiveApp() {
         bottomBar = {
             NavigationBar(containerColor = cardDark) {
                 NavigationBarItem(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tab == 0) cyanAccent else Color.Gray) },
+                    selected = tabState.value == 0,
+                    onClick = { tabState.value = 0 },
+                    icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tabState.value == 0) cyanAccent else Color.Gray) },
                     label = { Text("Downloader", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
-                    selected = tab == 1,
-                    onClick = { tab = 1; refreshTools() },
-                    icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tab == 1) cyanAccent else Color.Gray) },
+                    selected = tabState.value == 1,
+                    onClick = { tabState.value = 1; refreshTools() },
+                    icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tabState.value == 1) cyanAccent else Color.Gray) },
                     label = { Text("Packages", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
-                    selected = tab == 2,
-                    onClick = { tab = 2 },
-                    icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tab == 2) cyanAccent else Color.Gray) },
+                    selected = tabState.value == 2,
+                    onClick = { tabState.value = 2 },
+                    icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tabState.value == 2) cyanAccent else Color.Gray) },
                     label = { Text("Token & BG", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
             }
@@ -147,12 +174,13 @@ fun PyServerResponsiveApp() {
                                 fontWeight = FontWeight.Bold
                             )
                             Surface(
-                                color = if (bgActive) greenOk.copy(alpha = 0.16f) else cyanAccent.copy(alpha = 0.14f),
-                                shape = RoundedCornerShape(8.dp)
+                                color = statusColor.value.copy(alpha = 0.16f),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.scale(pulseScale.value)
                             ) {
                                 Text(
-                                    if (bgActive) "BG LIVE" else "READY",
-                                    color = if (bgActive) greenOk else cyanAccent,
+                                    if (bgActiveState.value) "BG LIVE" else "ANIM READY",
+                                    color = statusColor.value,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -160,7 +188,7 @@ fun PyServerResponsiveApp() {
                             }
                         }
                         Text(
-                            statusMsg,
+                            statusMsgState.value,
                             color = Color(0xFFCBD5E1),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 2,
@@ -170,7 +198,7 @@ fun PyServerResponsiveApp() {
                 }
             }
 
-            when (tab) {
+            when (tabState.value) {
                 0 -> {
                     item {
                         Card(
@@ -185,9 +213,9 @@ fun PyServerResponsiveApp() {
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 OutlinedTextField(
-                                    value = mediaUrl,
-                                    onValueChange = { mediaUrl = it },
-                                    label = { Text("Paste Video / Media URL") },
+                                    value = mediaUrlState.value,
+                                    onValueChange = { mediaUrlState.value = it },
+                                    label = { Text("Paste Video / GIF / Media URL") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -198,7 +226,7 @@ fun PyServerResponsiveApp() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("Python Bridge", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = usePyBridge, onCheckedChange = { usePyBridge = it })
+                                    Switch(checked = usePyBridgeState.value, onCheckedChange = { usePyBridgeState.value = it })
                                 }
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -206,14 +234,14 @@ fun PyServerResponsiveApp() {
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text("aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = useAria2, onCheckedChange = { useAria2 = it })
+                                    Switch(checked = useAria2State.value, onCheckedChange = { useAria2State.value = it })
                                 }
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     OutlinedButton(
-                                        onClick = { clipboard.getText()?.text?.let { mediaUrl = it } },
+                                        onClick = { clipboard.getText()?.text?.let { mediaUrlState.value = it } },
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
@@ -221,23 +249,27 @@ fun PyServerResponsiveApp() {
                                     }
                                     Button(
                                         onClick = {
-                                            working = true
-                                            statusMsg = "Analyzing..."
+                                            workingState.value = true
+                                            statusMsgState.value = "Analyzing..."
                                             scope.launch {
                                                 val res = withContext(Dispatchers.IO) {
-                                                    MediaDownloaderEngine.analyzeUrl(context, mediaUrl, usePyBridge)
+                                                    MediaDownloaderEngine.analyzeUrl(
+                                                        context,
+                                                        mediaUrlState.value,
+                                                        usePyBridgeState.value
+                                                    )
                                                 }
-                                                working = false
+                                                workingState.value = false
                                                 res.onSuccess {
-                                                    analysis = it
-                                                    selectedFormat = it.formats.firstOrNull()
-                                                    statusMsg = "Found ${it.formats.size} formats"
+                                                    analysisState.value = it
+                                                    selectedFormatState.value = it.formats.firstOrNull()
+                                                    statusMsgState.value = "Found ${it.formats.size} formats"
                                                 }.onFailure {
-                                                    statusMsg = "Error: ${it.message}"
+                                                    statusMsgState.value = "Error: ${it.message}"
                                                 }
                                             }
                                         },
-                                        enabled = !working,
+                                        enabled = !workingState.value,
                                         shape = RoundedCornerShape(12.dp),
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = cyanAccent,
@@ -245,14 +277,14 @@ fun PyServerResponsiveApp() {
                                         ),
                                         modifier = Modifier.weight(2f)
                                     ) {
-                                        Text(if (working) "Working..." else "Analyze", maxLines = 1)
+                                        Text(if (workingState.value) "Working..." else "Analyze", maxLines = 1)
                                     }
                                 }
                             }
                         }
                     }
 
-                    analysis?.let { info ->
+                    analysisState.value?.let { info ->
                         item {
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = cardDark),
@@ -276,7 +308,7 @@ fun PyServerResponsiveApp() {
                             }
                         }
                         items(info.formats) { fmt ->
-                            val picked = selectedFormat == fmt
+                            val picked = selectedFormatState.value == fmt
                             Card(
                                 colors = CardDefaults.cardColors(
                                     containerColor = if (picked) Color(0xFF17253B) else cardDark
@@ -289,7 +321,7 @@ fun PyServerResponsiveApp() {
                                         if (picked) cyanAccent else borderNeon,
                                         RoundedCornerShape(12.dp)
                                     )
-                                    .clickable { selectedFormat = fmt }
+                                    .clickable { selectedFormatState.value = fmt }
                             ) {
                                 Row(
                                     modifier = Modifier
@@ -314,27 +346,33 @@ fun PyServerResponsiveApp() {
                                             overflow = TextOverflow.Ellipsis
                                         )
                                     }
-                                    RadioButton(selected = picked, onClick = { selectedFormat = fmt })
+                                    RadioButton(
+                                        selected = picked,
+                                        onClick = { selectedFormatState.value = fmt }
+                                    )
                                 }
                             }
                         }
                         item {
                             Button(
                                 onClick = {
-                                    val fmt = selectedFormat ?: return@Button
-                                    working = true
-                                    statusMsg = "Downloading ${fmt.titleLabel}..."
+                                    val fmt = selectedFormatState.value ?: return@Button
+                                    workingState.value = true
+                                    statusMsgState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) {
-                                                appendLog(it)
-                                            }
+                                            MediaDownloaderEngine.downloadMedia(
+                                                context,
+                                                mediaUrlState.value,
+                                                fmt,
+                                                useAria2State.value
+                                            ) { appendLog(it) }
                                         }
-                                        working = false
-                                        statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                        workingState.value = false
+                                        statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
                                     }
                                 },
-                                enabled = !working && selectedFormat != null,
+                                enabled = !workingState.value && selectedFormatState.value != null,
                                 shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = cyanAccent,
@@ -362,7 +400,7 @@ fun PyServerResponsiveApp() {
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
-                                toolStatuses.forEach { st ->
+                                toolStatusesState.value.forEach { st ->
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalArrangement = Arrangement.SpaceBetween
@@ -391,31 +429,31 @@ fun PyServerResponsiveApp() {
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
                                 OutlinedTextField(
-                                    value = manifestUrl,
-                                    onValueChange = { manifestUrl = it },
+                                    value = manifestUrlState.value,
+                                    onValueChange = { manifestUrlState.value = it },
                                     label = { Text("GitHub manifest.json URL") },
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Button(
                                     onClick = {
-                                        working = true
-                                        AssetsAndPackageManager.setManifestUrl(context, manifestUrl)
+                                        workingState.value = true
+                                        AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
                                         scope.launch {
                                             val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.fetchManifest(context, manifestUrl)
+                                                AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value)
                                             }
-                                            working = false
+                                            workingState.value = false
                                             res.onSuccess { list ->
-                                                packages = list
+                                                packagesState.value = list
                                                 refreshTools()
-                                                statusMsg = "Loaded ${list.size} packages"
+                                                statusMsgState.value = "Loaded ${list.size} packages"
                                             }.onFailure {
-                                                statusMsg = "Error: ${it.message}"
+                                                statusMsgState.value = "Error: ${it.message}"
                                             }
                                         }
                                     },
-                                    enabled = !working,
+                                    enabled = !workingState.value,
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = cyanAccent,
@@ -428,8 +466,8 @@ fun PyServerResponsiveApp() {
                             }
                         }
                     }
-                    items(packages) { pkg ->
-                        val localVer = versionMap[pkg.id]
+                    items(packagesState.value) { pkg ->
+                        val localVer = versionMapState.value[pkg.id]
                         val action = when {
                             localVer == null -> "Install"
                             localVer != pkg.version -> "Update"
@@ -465,19 +503,19 @@ fun PyServerResponsiveApp() {
                                 }
                                 Button(
                                     onClick = {
-                                        working = true
+                                        workingState.value = true
                                         scope.launch {
                                             val res = withContext(Dispatchers.IO) {
                                                 AssetsAndPackageManager.installPackage(context, pkg) {
-                                                    statusMsg = it
+                                                    statusMsgState.value = it
                                                 }
                                             }
-                                            working = false
+                                            workingState.value = false
                                             refreshTools()
-                                            statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                            statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
                                         }
                                     },
-                                    enabled = !working,
+                                    enabled = !workingState.value,
                                     shape = RoundedCornerShape(10.dp),
                                     colors = ButtonDefaults.buttonColors(
                                         containerColor = cyanAccent,
@@ -511,12 +549,12 @@ fun PyServerResponsiveApp() {
                                 ) {
                                     Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
                                     Switch(
-                                        checked = bgActive,
+                                        checked = bgActiveState.value,
                                         onCheckedChange = { enabled ->
-                                            bgActive = enabled
+                                            bgActiveState.value = enabled
                                             val intent = Intent(context, BackgroundEngineService::class.java).apply {
-                                                putExtra("gateway_url", gatewayUrl.trim())
-                                                putExtra("token", apiToken.trim())
+                                                putExtra("gateway_url", gatewayUrlState.value.trim())
+                                                putExtra("token", apiTokenState.value.trim())
                                             }
                                             if (enabled) ContextCompat.startForegroundService(context, intent)
                                             else context.stopService(intent)
@@ -524,16 +562,16 @@ fun PyServerResponsiveApp() {
                                     )
                                 }
                                 OutlinedTextField(
-                                    value = gatewayUrl,
-                                    onValueChange = { gatewayUrl = it },
+                                    value = gatewayUrlState.value,
+                                    onValueChange = { gatewayUrlState.value = it },
                                     label = { Text("Render Gateway URL") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 OutlinedTextField(
-                                    value = apiToken,
-                                    onValueChange = { apiToken = it },
+                                    value = apiTokenState.value,
+                                    onValueChange = { apiTokenState.value = it },
                                     label = { Text("API Token (/tokenrender)") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
@@ -541,7 +579,7 @@ fun PyServerResponsiveApp() {
                                 )
                                 OutlinedButton(
                                     onClick = {
-                                        val base = gatewayUrl.trim().trimEnd('/')
+                                        val base = gatewayUrlState.value.trim().trimEnd('/')
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
                                     },
                                     shape = RoundedCornerShape(12.dp),
@@ -573,7 +611,7 @@ fun PyServerResponsiveApp() {
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
-                        logs.forEach { line ->
+                        logsState.value.forEach { line ->
                             Text(
                                 line,
                                 color = Color(0xFFCBD5E1),

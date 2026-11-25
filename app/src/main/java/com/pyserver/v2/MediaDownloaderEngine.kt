@@ -13,7 +13,7 @@ import java.net.URL
 data class FormatChoice(
     val formatId: String,
     val titleLabel: String,
-    val mediaType: String,
+    val mediaType: String, // "video", "gif", "audio"
     val metaInfo: String
 )
 
@@ -52,6 +52,7 @@ object MediaDownloaderEngine {
                     duration = "N/A",
                     formats = listOf(
                         FormatChoice("direct", "Direct File Download", "video", "Direct stream"),
+                        FormatChoice("gif_clip", "Animated GIF (480w • 12fps)", "gif", "Requires FFmpeg"),
                         FormatChoice("bestaudio", "Audio Only (MP3)", "audio", "Requires FFmpeg")
                     )
                 )
@@ -87,6 +88,7 @@ object MediaDownloaderEngine {
                     }
                 }
             }
+            formats.add(FormatChoice("gif_clip", "Animated GIF (480w • 12fps)", "gif", "Converted via FFmpeg"))
             formats.add(FormatChoice("bestaudio", "Audio Only • MP3", "audio", "Extracted via FFmpeg"))
             Result.success(
                 MediaAnalysis(
@@ -119,6 +121,37 @@ object MediaDownloaderEngine {
         }
 
         return try {
+            if (choice.mediaType == "gif") {
+                val animCfg = PythonRunner.loadAnimationConfig(context)
+                val fps = animCfg.optInt("gif_fps", 12)
+                val width = animCfg.optInt("gif_width", 480)
+                val tempMp4 = File(outDir, "tmp_gif_${System.currentTimeMillis()}.mp4")
+                val outGif = File(outDir, "anim_${System.currentTimeMillis()}.gif")
+
+                val dlCmd = mutableListOf(ytdlp, "--no-playlist", "-f", "best[height<=720]/best", "-o", tempMp4.absolutePath)
+                if (File(ffmpeg).exists() && File(ffmpeg).canExecute()) {
+                    dlCmd.addAll(listOf("--ffmpeg-location", ffmpeg))
+                }
+                dlCmd.add(url)
+                val dlCode = ProcessBuilder(dlCmd).redirectErrorStream(true).start().waitFor()
+                if (dlCode != 0 || !tempMp4.exists()) {
+                    return Result.failure(Exception("GIF source download failed"))
+                }
+
+                val ffCmd = listOf(
+                    ffmpeg, "-y", "-i", tempMp4.absolutePath,
+                    "-vf", "fps=$fps,scale=$width:-1:flags=lanczos",
+                    outGif.absolutePath
+                )
+                val ffCode = ProcessBuilder(ffCmd).redirectErrorStream(true).start().waitFor()
+                if (tempMp4.exists()) tempMp4.delete()
+                return if (ffCode == 0 && outGif.exists()) {
+                    Result.success("Saved GIF: ${outGif.absolutePath}")
+                } else {
+                    Result.failure(Exception("FFmpeg GIF conversion failed"))
+                }
+            }
+
             val outTemplate = File(outDir, "%(title).75s [%(id)s].%(ext)s").absolutePath
             val cmd = mutableListOf(ytdlp, "--no-playlist", "-o", outTemplate)
             if (File(ffmpeg).exists() && File(ffmpeg).canExecute()) {
