@@ -10,6 +10,7 @@ import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 data class FormatChoice(
     val formatId: String,
@@ -36,6 +37,12 @@ object MediaDownloaderEngine {
     ): Result<MediaAnalysis> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(Exception("URL paste karein"))
+        val parsedUrl = try { URL(url) } catch (_: Exception) {
+            return Result.failure(Exception("Enter a valid HTTP or HTTPS URL"))
+        }
+        if (parsedUrl.protocol !in setOf("http", "https") || parsedUrl.host.isBlank()) {
+            return Result.failure(Exception("Only HTTP and HTTPS URLs are supported"))
+        }
 
         if (preferPythonBridge) {
             val pyRes = PythonRunner.analyzeWithPythonBridge(context, url)
@@ -45,11 +52,21 @@ object MediaDownloaderEngine {
         val ytdlp = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
         if (AssetsAndPackageManager.canExecuteFile(ytdlp)) {
             try {
+                val logFile = File(context.cacheDir, "ytdlp_analyze_${System.currentTimeMillis()}.log")
                 val proc = ProcessBuilder(ytdlp, "-J", "--no-playlist", url)
-                    .redirectErrorStream(false)
+                    .redirectErrorStream(true)
+                    .redirectOutput(logFile)
                     .start()
-                val out = BufferedReader(InputStreamReader(proc.inputStream)).readText()
-                val code = proc.waitFor()
+                val finished = proc.waitFor(60, TimeUnit.SECONDS)
+                if (!finished) {
+                    proc.destroyForcibly()
+                    proc.waitFor(2, TimeUnit.SECONDS)
+                    logFile.delete()
+                    return Result.failure(Exception("Media analysis timed out"))
+                }
+                val out = if (logFile.exists()) logFile.readText().take(8 * 1024 * 1024) else ""
+                logFile.delete()
+                val code = proc.exitValue()
                 if (code == 0 && out.isNotBlank()) {
                     val root = JSONObject(out)
                     val arr: JSONArray = root.optJSONArray("formats") ?: JSONArray()
@@ -90,60 +107,67 @@ object MediaDownloaderEngine {
     }
 
     private fun nativeAnalyzeFallback(url: String): Result<MediaAnalysis> {
-        var title = "Media Stream"
-        var sourceType = "Universal Web Stream"
-        var contentType = "video/mp4"
-
-        try {
-            if (url.contains("youtube.com", true) || url.contains("youtu.be", true)) {
-                sourceType = "YouTube"
-                val encoded = URLEncoder.encode(url, "UTF-8")
-                val oembedUrl = "https://www.youtube.com/oembed?url=$encoded&format=json"
-                val conn = (URL(oembedUrl).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                }
-                if (conn.responseCode in 200..299) {
-                    val body = conn.inputStream.bufferedReader().readText()
-                    title = JSONObject(body).optString("title", title)
-                }
-                conn.disconnect()
-            } else {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "HEAD"
-                    instanceFollowRedirects = true
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                }
-                contentType = conn.contentType ?: contentType
-                val cleanPath = url.substringBefore("?").substringAfterLast("/")
-                if (cleanPath.isNotBlank()) title = cleanPath
-                conn.disconnect()
-            }
-        } catch (_: Exception) {
+        val parsed = try {
+            URL(url)
+        } catch (e: Exception) {
+            return Result.failure(Exception("Enter a valid HTTP or HTTPS media URL"))
+        }
+        if (parsed.protocol !in setOf("http", "https")) {
+            return Result.failure(Exception("Only HTTP and HTTPS media URLs are supported"))
+        }
+        val host = parsed.host.lowercase()
+        if (host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be" || host.endsWith(".youtu.be")) {
+            return Result.failure(Exception("This site needs a compatible yt-dlp runtime; no verified runtime is available in this APK"))
         }
 
-        val formats = listOf(
-            FormatChoice("1080p", "1080p • Full HD MP4", "video", "High resolution stream ($contentType)"),
-            FormatChoice("720p", "720p • HD MP4", "video", "Balanced HD quality"),
-            FormatChoice("480p", "480p • SD MP4", "video", "Fast mobile download"),
-            FormatChoice("360p", "360p • Data Saver MP4", "video", "Low data usage"),
-            FormatChoice("gif_clip", "GIF Clip (480w • 12fps)", "gif", "Animated GIF output"),
-            FormatChoice("bestaudio", "Audio Only (M4A / MP3)", "audio", "Audio stream")
-        )
+        return try {
+            val conn = (parsed.openConnection() as HttpURLConnection).apply {
+                requestMethod = "HEAD"
+                instanceFollowRedirects = true
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+                connectTimeout = 10000
+                readTimeout = 10000
+            }
+            val code = conn.responseCode
+            val contentType = (conn.contentType ?: "").substringBefore(';').trim().lowercase()
+            val finalUrl = conn.url.toString()
+            val disposition = conn.getHeaderField("Content-Disposition") ?: ""
+            conn.disconnect()
+            if (code !in 200..299) {
+                return Result.failure(Exception("Media server returned HTTP $code"))
+            }
+            if (contentType == "text/html" || contentType.contains("mpegurl") || finalUrl.substringBefore('?').endsWith(".m3u8", true)) {
+                return Result.failure(Exception("This page/playlist requires a compatible media extractor; direct-file fallback cannot process it"))
+            }
 
-        return Result.success(
-            MediaAnalysis(
-                title = title,
-                extractor = sourceType,
-                duration = "Ready",
-                formats = formats
+            val path = finalUrl.substringBefore('?').substringAfterLast('/').lowercase()
+            val knownExt = path.substringAfterLast('.', "")
+            val mediaType = when {
+                contentType.startsWith("video/") || knownExt in setOf("mp4", "m4v", "mov", "webm", "mkv") -> "video"
+                contentType.startsWith("audio/") || knownExt in setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac") -> "audio"
+                contentType == "image/gif" || knownExt == "gif" -> "gif"
+                else -> return Result.failure(Exception("URL did not identify a supported direct media file (server type: ${contentType.ifBlank { "unknown" }})"))
+            }
+            val title = disposition.substringAfter("filename=", "").trim().trim('"').ifBlank { path.ifBlank { "Media file" } }
+            val kind = when (mediaType) {
+                "audio" -> "Audio file"
+                "gif" -> "GIF image"
+                else -> "Video file"
+            }
+            Result.success(
+                MediaAnalysis(
+                    title = title,
+                    extractor = "Direct file",
+                    duration = "Original stream",
+                    formats = listOf(FormatChoice("direct", "$kind (original)", mediaType, "Downloaded without conversion"))
+                )
             )
-        )
+        } catch (e: Exception) {
+            Result.failure(Exception("Could not inspect this URL as a direct media file: ${e.message}"))
+        }
     }
 
-    fun downloadMedia(
+          fun downloadMedia(
         context: Context,
         rawUrl: String,
         choice: FormatChoice,
@@ -153,6 +177,9 @@ object MediaDownloaderEngine {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(Exception("URL empty"))
         val outDir = outputDirectory(context)
+        if (choice.formatId == "direct") {
+            return nativeStreamDownload(url, choice, outDir, onLog)
+        }
 
         val ytdlp = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
         val ffmpeg = AssetsAndPackageManager.resolveTool(context, "ffmpeg")
@@ -161,6 +188,9 @@ object MediaDownloaderEngine {
         if (AssetsAndPackageManager.canExecuteFile(ytdlp)) {
             try {
                 if (choice.mediaType == "gif") {
+                    if (!AssetsAndPackageManager.canExecuteFile(ffmpeg)) {
+                        return Result.failure(Exception("GIF conversion requires an Android-compatible FFmpeg runtime"))
+                    }
                     val animCfg = PythonRunner.loadAnimationConfig(context)
                     val fps = animCfg.optInt("gif_fps", 12)
                     val width = animCfg.optInt("gif_width", 480)
@@ -176,6 +206,7 @@ object MediaDownloaderEngine {
                             val ffCmd = listOf(
                                 ffmpeg, "-y", "-i", tempMp4.absolutePath,
                                 "-vf", "fps=$fps,scale=$width:-1:flags=lanczos",
+                                "-loop", "0",
                                 outGif.absolutePath
                             )
                             if (ProcessBuilder(ffCmd).redirectErrorStream(true).start().waitFor() == 0 && outGif.exists()) {
@@ -184,6 +215,9 @@ object MediaDownloaderEngine {
                             }
                         }
                     }
+                    tempMp4.delete()
+                    outGif.delete()
+                    return Result.failure(Exception("GIF download/conversion failed; check yt-dlp and FFmpeg"))
                 } else {
                     val outTemplate = File(outDir, "%(title).70s [%(id)s].%(ext)s").absolutePath
                     val cmd = mutableListOf(ytdlp, "--no-playlist", "-o", outTemplate)
@@ -199,17 +233,27 @@ object MediaDownloaderEngine {
                         else -> cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
                     }
                     cmd.add(url)
-                    val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
-                    proc.inputStream.bufferedReader().forEachLine { line -> onLog(line) }
-                    if (proc.waitFor() == 0) {
+                    val logFile = File(context.cacheDir, "ytdlp_download_${System.currentTimeMillis()}.log")
+                    val proc = ProcessBuilder(cmd).redirectErrorStream(true).redirectOutput(logFile).start()
+                    val finished = proc.waitFor(2, TimeUnit.HOURS)
+                    if (!finished) {
+                        proc.destroyForcibly()
+                        proc.waitFor(2, TimeUnit.SECONDS)
+                    }
+                    if (logFile.exists()) {
+                        logFile.useLines { lines -> lines.take(200).forEach(onLog) }
+                        logFile.delete()
+                    }
+                    if (finished && proc.exitValue() == 0) {
                         return Result.success("Saved in ${outDir.absolutePath}")
                     }
+                    return Result.failure(Exception(if (finished) "yt-dlp failed; see the debug console" else "Download timed out after 2 hours"))
                 }
             } catch (_: Exception) {
             }
         }
 
-        return nativeStreamDownload(url, choice, outDir, onLog)
+        return Result.failure(Exception("No compatible yt-dlp/FFmpeg runtime is available for this selected format. A direct media-file URL can still be downloaded."))
     }
 
     private fun nativeStreamDownload(
@@ -218,48 +262,85 @@ object MediaDownloaderEngine {
         outDir: File,
         onLog: (String) -> Unit
     ): Result<String> {
+        if (choice.formatId != "direct") {
+            return Result.failure(Exception("Only a verified direct media URL can use the native download fallback"))
+        }
         return try {
-            val ext = when (choice.mediaType) {
-                "gif" -> "gif"
-                "audio" -> "m4a"
-                else -> "mp4"
+            val parsed = URL(url)
+            if (parsed.protocol !in setOf("http", "https")) {
+                return Result.failure(Exception("Only HTTP and HTTPS downloads are supported"))
             }
-            val baseName = url.substringBefore("?")
-                .substringAfterLast("/")
-                .substringBefore(".")
-                .replace(Regex("[^A-Za-z0-9_-]"), "_")
-                .ifBlank { "media_${System.currentTimeMillis()}" }
-            val outFile = File(outDir, "${baseName}_${choice.formatId}.$ext")
-
-            onLog("Fetching media stream (${choice.titleLabel})...")
-            val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            onLog("Fetching verified direct media file...")
+            val conn = (parsed.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
                 connectTimeout = 20000
                 readTimeout = 60000
             }
-            if (conn.responseCode !in 200..299) {
-                return Result.failure(Exception("Source returned HTTP ${conn.responseCode} (use direct stream or install tool)"))
+            val code = conn.responseCode
+            val contentType = (conn.contentType ?: "").substringBefore(';').trim().lowercase()
+            val finalUrl = conn.url.toString()
+            if (code !in 200..299) {
+                conn.disconnect()
+                return Result.failure(Exception("Source returned HTTP $code"))
             }
-            conn.inputStream.use { inp ->
-                FileOutputStream(outFile).use { outp ->
-                    val buf = ByteArray(16384)
+            if (contentType == "text/html" || contentType.contains("mpegurl") || finalUrl.substringBefore('?').endsWith(".m3u8", true)) {
+                conn.disconnect()
+                return Result.failure(Exception("Server returned a webpage or streaming playlist, not a direct media file"))
+            }
+            val path = finalUrl.substringBefore('?').substringAfterLast('/')
+            val suffix = path.substringAfterLast('.', "").lowercase()
+            val ext = when {
+                contentType == "video/mp4" -> "mp4"
+                contentType == "video/webm" -> "webm"
+                contentType == "video/quicktime" -> "mov"
+                contentType == "audio/mpeg" -> "mp3"
+                contentType == "audio/mp4" -> "m4a"
+                contentType == "audio/aac" -> "aac"
+                contentType == "audio/ogg" -> "ogg"
+                contentType == "audio/wav" || contentType == "audio/x-wav" -> "wav"
+                contentType == "image/gif" -> "gif"
+                contentType.startsWith("video/") && suffix in setOf("mp4", "m4v", "mov", "webm", "mkv") -> suffix
+                contentType.startsWith("audio/") && suffix in setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac") -> suffix
+                contentType == "application/octet-stream" && suffix in setOf("mp4", "m4v", "mov", "webm", "mkv", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac", "gif") -> suffix
+                else -> {
+                    conn.disconnect()
+                    return Result.failure(Exception("Unsupported direct media type: ${contentType.ifBlank { "unknown" }}"))
+                }
+            }
+            val safeBase = path.substringBeforeLast('.', path)
+                .replace(Regex("[^A-Za-z0-9_-]"), "_")
+                .take(80)
+                .ifBlank { "media_${System.currentTimeMillis()}" }
+            val outFile = File(outDir, "$safeBase.$ext")
+            val tempFile = File(outDir, "$safeBase.$ext.part")
+            conn.inputStream.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    val buffer = ByteArray(16384)
                     var total = 0L
                     while (true) {
-                        val r = inp.read(buf)
-                        if (r == -1) break
-                        outp.write(buf, 0, r)
-                        total += r
+                        val read = input.read(buffer)
+                        if (read < 0) break
+                        output.write(buffer, 0, read)
+                        total += read
+                        if (total > 2L * 1024 * 1024 * 1024) {
+                            throw Exception("File exceeds the 2 GiB safe download limit")
+                        }
                     }
-                    outp.flush()
+                    output.flush()
                     onLog("Downloaded ${total / 1024} KB")
                 }
             }
             conn.disconnect()
+            if (outFile.exists()) outFile.delete()
+            if (!tempFile.renameTo(outFile)) {
+                tempFile.copyTo(outFile, overwrite = true)
+                tempFile.delete()
+            }
             Result.success("Saved: ${outFile.absolutePath}")
         } catch (e: Exception) {
-            Result.failure(Exception("Download failed: ${e.message}"))
+            Result.failure(Exception("Direct download failed: ${e.message}"))
         }
     }
-}
+          }

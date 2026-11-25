@@ -107,7 +107,7 @@ fun PyServerMediaApp() {
 
     val tabState = remember { mutableStateOf(0) } // 0: Media, 1: PKG & Terminal, 2: Token & BG
     val mediaUrlState = remember { mutableStateOf("") }
-    val useAria2State = remember { mutableStateOf(true) }
+    val useAria2State = remember { mutableStateOf(false) }
     val usePyBridgeState = remember { mutableStateOf(false) }
     val showConsoleState = remember { mutableStateOf(false) } // Console hidden by default
 
@@ -116,14 +116,14 @@ fun PyServerMediaApp() {
 
     val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
     val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    val versionMapState = remember { mutableStateOf>(emptyMap()) }
+    val versionMapState = remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
     val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
 
     // Terminal state inside PKG tab
     val termCmdState = remember { mutableStateOf("tools") }
     val termOutputState = remember { mutableStateOf("Terminal ready. Type 'help', 'tools', 'ls', or 'pkg install <id>'.") }
 
-    val gatewayUrlState = remember { mutableStateOf("https://your-gateway.onrender.com") }
+    val gatewayUrlState = remember { mutableStateOf("") }
     val apiTokenState = remember { mutableStateOf("") }
     val bgActiveState = remember { mutableStateOf(false) }
 
@@ -260,7 +260,7 @@ fun PyServerMediaApp() {
                                 OutlinedTextField(
                                     value = mediaUrlState.value,
                                     onValueChange = { mediaUrlState.value = it },
-                                    label = { Text("Paste Any Video / Stream URL") },
+                                    label = { Text("Paste a direct media-file URL (MP4, WebM, MP3, GIF)") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -271,7 +271,7 @@ fun PyServerMediaApp() {
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("aria2c Multi-Stream", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                    Text("Use aria2c if installed", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     Switch(checked = useAria2State.value, onCheckedChange = { useAria2State.value = it })
                                 }
 
@@ -302,7 +302,7 @@ fun PyServerMediaApp() {
                                     Button(
                                         onClick = {
                                             workingState.value = true
-                                            loaderTitleState.value = "Analyzing URL & Resolutions..."
+                                            loaderTitleState.value = "Checking direct media URL..."
                                             scope.launch {
                                                 val res = withContext(Dispatchers.IO) {
                                                     MediaDownloaderEngine.analyzeUrl(
@@ -629,6 +629,11 @@ fun PyServerMediaApp() {
                                     Switch(
                                         checked = bgActiveState.value,
                                         onCheckedChange = { enabled ->
+                                            if (enabled && (!gatewayUrlState.value.trim().startsWith("https://", true) || apiTokenState.value.isBlank())) {
+                                                bgActiveState.value = false
+                                                statusMsgState.value = "Enter a valid HTTPS gateway URL and API token before starting the service"
+                                                return@Switch
+                                            }
                                             bgActiveState.value = enabled
                                             val intent = Intent(context, BackgroundEngineService::class.java).apply {
                                                 putExtra("gateway_url", gatewayUrlState.value.trim())

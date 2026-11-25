@@ -9,6 +9,7 @@ import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 data class ManifestPackage(
     val id: String,
@@ -28,8 +29,7 @@ data class ToolStatus(
 object AssetsAndPackageManager {
     private const val PREFS = "pyserver2_prefs"
     private const val KEY_MANIFEST = "manifest_url"
-    private const val DEFAULT_MANIFEST =
-        "https://raw.githubusercontent.com/YOUR_USER/pyserver-assets/main/manifest.json"
+    private const val DEFAULT_MANIFEST = ""
 
     fun binDir(context: Context): File = File(context.filesDir, "bin").apply { mkdirs() }
     fun pkgDir(context: Context): File = File(context.filesDir, "packages").apply { mkdirs() }
@@ -151,13 +151,20 @@ object AssetsAndPackageManager {
             }
             else -> {
                 try {
+                    val outputFile = File(context.cacheDir, "terminal_${System.currentTimeMillis()}.log")
                     val proc = ProcessBuilder("sh", "-c", cmd)
                         .directory(pkgDir(context))
                         .redirectErrorStream(true)
+                        .redirectOutput(outputFile)
                         .start()
-                    val out = BufferedReader(InputStreamReader(proc.inputStream)).readText()
-                    val code = proc.waitFor()
-                    out.ifBlank { "Exit code: $code" }.take(2000)
+                    val finished = proc.waitFor(15, TimeUnit.SECONDS)
+                    if (!finished) {
+                        proc.destroyForcibly()
+                        proc.waitFor(2, TimeUnit.SECONDS)
+                    }
+                    val out = if (outputFile.exists()) outputFile.readText().take(2000) else ""
+                    outputFile.delete()
+                    if (!finished) "Command timed out after 15 seconds\n$out" else out.ifBlank { "Exit code: ${proc.exitValue()}" }
                 } catch (e: Exception) {
                     "Shell restricted by Android: ${e.message}"
                 }
@@ -168,6 +175,9 @@ object AssetsAndPackageManager {
     fun fetchManifest(context: Context, urlOverride: String? = null): Result<List<ManifestPackage>> {
         return try {
             val target = urlOverride?.trim()?.ifEmpty { null } ?: getManifestUrl(context)
+            if (target.isBlank() || !target.startsWith("https://", true)) {
+                return Result.failure(Exception("Enter a valid HTTPS package manifest URL first"))
+            }
             val conn = (URL(target).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 instanceFollowRedirects = true
@@ -208,8 +218,18 @@ object AssetsAndPackageManager {
     ): Result<String> {
         return try {
             val dir = if (pkg.category == "package") pkgDir(context) else binDir(context)
-            val dest = File(dir, pkg.filename)
-            val temp = File(dir, "${pkg.filename}.tmp")
+            if (pkg.filename.isBlank() || pkg.filename in setOf(".", "..") || !Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,127}").matches(pkg.filename)) {
+                return Result.failure(Exception("Invalid package filename"))
+            }
+            val rootPath = dir.canonicalPath + File.separator
+            val dest = File(dir, pkg.filename).canonicalFile
+            val temp = File(dir, "${pkg.filename}.tmp").canonicalFile
+            if (!dest.path.startsWith(rootPath) || !temp.path.startsWith(rootPath)) {
+                return Result.failure(Exception("Package path escapes the app package directory"))
+            }
+            if (!pkg.url.startsWith("https://", true)) {
+                return Result.failure(Exception("Package URL must use HTTPS"))
+            }
             onProgress("Downloading ${pkg.name} v${pkg.version}...")
             val conn = (URL(pkg.url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -219,6 +239,10 @@ object AssetsAndPackageManager {
             }
             if (conn.responseCode !in 200..299) {
                 return Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
+            if (!conn.url.protocol.equals("https", true)) {
+                conn.disconnect()
+                return Result.failure(Exception("Package download redirected to a non-HTTPS URL"))
             }
             conn.inputStream.use { inp ->
                 FileOutputStream(temp).use { outp ->

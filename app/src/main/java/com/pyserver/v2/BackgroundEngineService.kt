@@ -10,6 +10,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -23,10 +24,16 @@ class BackgroundEngineService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var gatewayUrl = ""
     private var token = ""
+    private var pollJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         gatewayUrl = intent?.getStringExtra("gateway_url")?.trim()?.trimEnd('/') ?: ""
         token = intent?.getStringExtra("token")?.trim() ?: ""
+        val gateway = try { URL(gatewayUrl) } catch (_: Exception) { null }
+        if (gateway?.protocol != "https" || gateway.host.isBlank() || gateway.userInfo != null || token.isBlank()) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         createChannel()
         val notif: Notification = NotificationCompat.Builder(this, "pyserver2_channel")
             .setContentTitle("PyServer 2.0 Engine Active")
@@ -35,13 +42,14 @@ class BackgroundEngineService : Service() {
             .setOngoing(true)
             .build()
         startForeground(303, notif)
-        scope.launch {
+        pollJob?.cancel()
+        pollJob = scope.launch {
             while (isActive) {
-                if (gatewayUrl.isNotEmpty() && token.isNotEmpty()) pollGateway()
+                pollGateway()
                 delay(4000)
             }
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun pollGateway() {
@@ -105,6 +113,7 @@ class BackgroundEngineService : Service() {
     }
 
     override fun onDestroy() {
+        pollJob?.cancel()
         scope.cancel()
         super.onDestroy()
     }

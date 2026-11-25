@@ -14,15 +14,6 @@ android {
         targetSdk = 35
         versionCode = 5
         versionName = "2.3.0"
-        ndk {
-            abiFilters += listOf("arm64-v8a")
-        }
-    }
-
-    packaging {
-        jniLibs {
-            useLegacyPackaging = true
-        }
     }
 
     buildFeatures {
