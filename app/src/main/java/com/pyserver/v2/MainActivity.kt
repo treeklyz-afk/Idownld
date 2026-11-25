@@ -2,7 +2,6 @@ package com.pyserver.v2
 
 import android.content.Intent
 import android.net.Uri
-import android.provider.Settings
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,6 +30,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -106,39 +106,29 @@ fun PyServerMediaApp() {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    val tabState = remember { mutableStateOf(0) } // 0: Media, 1: App Terminal, 2: Token & BG
+    val tabState = remember { mutableStateOf(0) } // 0: Media, 1: Native Libraries, 2: Render
     val mediaUrlState = remember { mutableStateOf("") }
-    val useAria2State = remember { mutableStateOf(false) }
-    val showConsoleState = remember { mutableStateOf(false) } // Console hidden by default
+    val showConsoleState = remember { mutableStateOf(false) } // In-app diagnostics, not a shell
 
     val analysisState = remember { mutableStateOf<MediaAnalysis?>(null) }
     val selectedFormatState = remember { mutableStateOf<FormatChoice?>(null) }
 
-    val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
-    val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
     val playlistSelectionState = remember { mutableStateOf<Set<Int>>(emptySet()) }
-
-    // Terminal state inside PKG tab
-    val termCmdState = remember { mutableStateOf("help") }
-    val termOutputState = remember { mutableStateOf("App-owned Android shell ready. Tools listed below are not executable until bundled into a signed APK.") }
 
     val gatewayUrlState = remember { mutableStateOf("") }
     val apiTokenState = remember { mutableStateOf("") }
     val bgActiveState = remember { mutableStateOf(false) }
+    val gatewayVerifiedState = remember { mutableStateOf(false) }
+    val gatewayStatusState = remember { mutableStateOf("Gateway token not verified") }
+    val nativeReportState = remember { mutableStateOf<NativeRuntimeReport?>(null) }
 
     val workingState = remember { mutableStateOf(false) }
     val loaderTitleState = remember { mutableStateOf("Analyzing media...") }
-    val statusMsgState = remember { mutableStateOf("App-owned shell enabled; direct media URLs work without a companion app") }
+    val statusMsgState = remember { mutableStateOf("Direct media URLs supported; native capabilities are shown from this APK") }
     val logsState = remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(line: String) {
         logsState.value = (logsState.value + line).takeLast(12)
-    }
-
-    LaunchedEffect(Unit) {
-        val result = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context) }
-        result.onSuccess { packagesState.value = it }
-            .onFailure { appendLog("Catalog load failed: ${it.message}") }
     }
 
     val bgDark = Color(0xFF060911)
@@ -165,14 +155,14 @@ fun PyServerMediaApp() {
                 NavigationBarItem(
                     selected = tabState.value == 1,
                     onClick = { tabState.value = 1 },
-                    icon = { Text(">_", color = if (tabState.value == 1) cyanAccent else Color.Gray) },
-                    label = { Text("Terminal", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    icon = { Text("◈", color = if (tabState.value == 1) cyanAccent else Color.Gray) },
+                    label = { Text("Libraries", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tabState.value == 2,
                     onClick = { tabState.value = 2 },
                     icon = { Text("⚡", color = if (tabState.value == 2) cyanAccent else Color.Gray) },
-                    label = { Text("Token BG", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    label = { Text("Render", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
             }
         }
@@ -256,15 +246,6 @@ fun PyServerMediaApp() {
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("Use aria2c if installed", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = useAria2State.value, onCheckedChange = { useAria2State.value = it })
-                                }
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -427,8 +408,8 @@ fun PyServerMediaApp() {
                                     loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, mediaUrlState.value, fmt, useAria2State.value) { appendLog(it) }
-                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), useAria2State.value) { appendLog(it) }
+                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, mediaUrlState.value, fmt, false) { appendLog(it) }
+                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), false) { appendLog(it) }
                                         }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
@@ -453,7 +434,7 @@ fun PyServerMediaApp() {
                                     workingState.value = true
                                     loaderTitleState.value = "Downloading full collection..."
                                     scope.launch {
-                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, null, useAria2State.value) { appendLog(it) } }
+                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, null, false) { appendLog(it) } }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
                                         appendLog(statusMsgState.value)
@@ -467,150 +448,71 @@ fun PyServerMediaApp() {
                 }
 
                 1 -> {
-                    // App-owned shell. Executable payloads require signed APK delivery on target SDK 35.
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, borderSubtle, RoundedCornerShape(16.dp))
+                            shape = RoundedCornerShape(18.dp),
+                            modifier = Modifier.fillMaxWidth().border(1.dp, borderSubtle, RoundedCornerShape(18.dp))
                         ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Text("App Terminal", color = cyanAccent, fontWeight = FontWeight.Bold)
-                                Text("Runs Android /system/bin/sh under this app's UID—no Termux, no root, and no companion setup. Android system tools and the app's private terminal/home folder are available.", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
-                                Text("Python, FFmpeg, aria2, Deno, Node, and yt-dlp are not bundled in this APK yet. On target SDK 35, executable tools must ship inside a signed APK; package entries below are version references only.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
-                                OutlinedTextField(
-                                    value = termCmdState.value,
-                                    onValueChange = { termCmdState.value = it },
-                                    label = { Text("Shell command (try: help, pwd, ls, toybox)") },
-                                    minLines = 1,
-                                    maxLines = 4,
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("Native media runtime", color = cyanAccent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    nativeReportState.value?.summary ?: "Inspect the libraries packaged in this APK. No native tools are downloaded at runtime.",
+                                    color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodyMedium
                                 )
                                 Button(
                                     onClick = {
                                         workingState.value = true
-                                        loaderTitleState.value = "Running app terminal..."
+                                        loaderTitleState.value = "Inspecting APK native runtime..."
                                         scope.launch {
-                                            val out = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.runTerminalCommand(context, termCmdState.value)
-                                            }
+                                            val report = withContext(Dispatchers.IO) { NativeMediaRuntime.probe() }
+                                            nativeReportState.value = report.copy(presentLibraries = NativeMediaRuntime.inventory(context).map { it.id })
                                             workingState.value = false
-                                            termOutputState.value = if (out == "\u0000CLEAR") "" else out.takeLast(7000)
+                                            statusMsgState.value = report.summary
                                         }
                                     },
                                     enabled = !workingState.value,
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = cyanAccent,
-                                        contentColor = Color.Black
-                                    ),
+                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
                                     modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Run command", fontWeight = FontWeight.Bold)
-                                }
-                                Surface(
-                                    color = Color(0xFF05080F),
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(
-                                        termOutputState.value,
-                                        color = greenOk,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.padding(12.dp)
-                                    )
+                                ) { Text("Inspect bundled runtime", fontWeight = FontWeight.Bold) }
+                                nativeReportState.value?.ffmpegOutput?.takeIf { it.isNotBlank() }?.let {
+                                    Text(it, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 }
                             }
                         }
                     }
-
-                    // Upstream version catalog. This screen never downloads executable code.
-                    item {
-                        Card(
-                            colors = CardDefaults.cardColors(containerColor = cardDark),
-                            shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, borderSubtle, RoundedCornerShape(16.dp))
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                OutlinedTextField(
-                                    value = manifestUrlState.value,
-                                    onValueChange = { manifestUrlState.value = it },
-                                    label = { Text("HTTPS runtime catalog URL") },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(12.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
-                                Button(
-                                    onClick = {
-                                        workingState.value = true
-                                        loaderTitleState.value = "Refreshing runtime catalog..."
-                                        scope.launch {
-                                            val saved = AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
-                                            val res = if (saved.isSuccess) withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value) }
-                                                else Result.failure(saved.exceptionOrNull() ?: IllegalStateException("Could not save manifest URL"))
-                                            workingState.value = false
-                                            res.onSuccess { list ->
-                                                packagesState.value = list
-                                                statusMsgState.value = "${list.size} upstream version references loaded; executables require a signed APK build"
-                                            }.onFailure { err ->
-                                                statusMsgState.value = err.message ?: "Manifest error"
-                                            }
-                                        }
-                                    },
-                                    enabled = !workingState.value,
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = cyanAccent,
-                                        contentColor = Color.Black
-                                    ),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("Refresh catalog")
-                                }
-                            }
-                        }
-                    }
-
-                    items(packagesState.value) { pkg ->
+                    items(NativeMediaRuntime.requestedLibraries) { library ->
+                        val report = nativeReportState.value
+                        val sharedObjectPresent = NativeMediaRuntime.isPresent(context, library.id)
+                        val featurePresent = library.id in (report?.featureLibraries ?: emptyList())
+                        val present = sharedObjectPresent || featurePresent
+                        val verified = sharedObjectPresent || report != null
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .border(1.dp, borderSubtle, RoundedCornerShape(14.dp))
+                            modifier = Modifier.fillMaxWidth().border(1.dp, if (present) greenOk.copy(alpha = 0.6f) else borderSubtle, RoundedCornerShape(14.dp))
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                    Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${pkg.id} • upstream ${pkg.version} • ${if (pkg.bundled) "in APK" else "not bundled"}", color = if (pkg.bundled) greenOk else Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
-                                    Text(pkg.description, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                Button(
-                                    onClick = {
-                                        termOutputState.value = AssetsAndPackageManager.packageUpdateInfo(pkg)
-                                        statusMsgState.value = "APK-only tool delivery; no separate package installer is used"
-                                    },
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(if (pkg.bundled) "APK update required" else "Bundle status", maxLines = 1, softWrap = false)
+                            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(library.name, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        when { featurePresent -> "FEATURE ON"; sharedObjectPresent -> "SO IN APK"; !verified -> "CHECK"; else -> "NOT INCLUDED" },
+                                        color = if (present) greenOk else Color(0xFFFFD580),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
+                                Text(library.role, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                                Text("License: ${library.license}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelSmall)
                             }
                         }
+                    }
+                    item {
+                        Text(
+                            "GPL codecs x264/x265 are omitted. FDK-AAC is excluded pending licensing and patent clearance. Python, yt-dlp, aria2, Deno and Node are not included in this runtime.",
+                            color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall
+                        )
                     }
                 }
 
@@ -635,37 +537,76 @@ fun PyServerMediaApp() {
                                     Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
                                     Switch(
                                         checked = bgActiveState.value,
+                                        enabled = !workingState.value,
                                         onCheckedChange = { enabled ->
-                                            if (enabled && (!gatewayUrlState.value.trim().startsWith("https://", true) || apiTokenState.value.isBlank())) {
+                                            if (!enabled) {
                                                 bgActiveState.value = false
-                                                statusMsgState.value = "Enter a valid HTTPS gateway URL and API token before starting the service"
-                                                return@Switch
+                                                gatewayVerifiedState.value = false
+                                                context.stopService(Intent(context, BackgroundEngineService::class.java))
+                                            } else {
+                                                val cleanUrl = gatewayUrlState.value.trim().trimEnd('/')
+                                                val token = apiTokenState.value.trim()
+                                                gatewayStatusState.value = "Verifying token with protected gateway endpoint…"
+                                                workingState.value = true
+                                                scope.launch {
+                                                    runCatching { withContext(Dispatchers.IO) { GatewayApi.fetchNextJob(cleanUrl, token) } }
+                                                        .onSuccess { preflight ->
+                                                            val intent = Intent(context, BackgroundEngineService::class.java).apply {
+                                                                putExtra("gateway_url", cleanUrl)
+                                                                putExtra("token", token)
+                                                                putExtra("prefetched_response", preflight.payload)
+                                                            }
+                                                            runCatching { ContextCompat.startForegroundService(context, intent) }
+                                                                .onSuccess {
+                                                                    gatewayVerifiedState.value = true
+                                                                    bgActiveState.value = true
+                                                                    gatewayStatusState.value = "Token verified. Background polling is active."
+                                                                    statusMsgState.value = "Render gateway authenticated"
+                                                                }
+                                                                .onFailure { err ->
+                                                                    gatewayVerifiedState.value = false
+                                                                    bgActiveState.value = false
+                                                                    gatewayStatusState.value = "Could not start service: ${err.message ?: "unknown error"}"
+                                                                }
+                                                        }
+                                                        .onFailure { err ->
+                                                            gatewayVerifiedState.value = false
+                                                            bgActiveState.value = false
+                                                            gatewayStatusState.value = err.message ?: "Gateway token verification failed"
+                                                        }
+                                                    workingState.value = false
+                                                }
                                             }
-                                            bgActiveState.value = enabled
-                                            val intent = Intent(context, BackgroundEngineService::class.java).apply {
-                                                putExtra("gateway_url", gatewayUrlState.value.trim())
-                                                putExtra("token", apiTokenState.value.trim())
-                                            }
-                                            if (enabled) ContextCompat.startForegroundService(context, intent)
-                                            else context.stopService(intent)
                                         }
                                     )
                                 }
                                 OutlinedTextField(
                                     value = gatewayUrlState.value,
-                                    onValueChange = { gatewayUrlState.value = it },
+                                    onValueChange = { gatewayUrlState.value = it; gatewayVerifiedState.value = false },
                                     label = { Text("Render Gateway URL") },
                                     singleLine = true,
+                                    enabled = !bgActiveState.value && !workingState.value,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 OutlinedTextField(
                                     value = apiTokenState.value,
-                                    onValueChange = { apiTokenState.value = it },
-                                    label = { Text("API Token (/tokenrender)") },
+                                    onValueChange = { apiTokenState.value = it; gatewayVerifiedState.value = false },
+                                    label = { Text("Gateway API Token") },
                                     singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    enabled = !bgActiveState.value && !workingState.value,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
+                                )
+                                Text(
+                                    gatewayStatusState.value,
+                                    color = if (gatewayVerifiedState.value) greenOk else Color(0xFFFFD580),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                Text(
+                                    "Starting the service first checks the Bearer token against the protected /api/bridge/next-job endpoint. Gateway jobs can download direct media URLs; this APK does not include website or playlist extractors.",
+                                    color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall
                                 )
                                 OutlinedButton(
                                     onClick = {

@@ -6,8 +6,6 @@ on:
       - main
     paths-ignore:
       - "packages/manifest.json"
-      - ".github/scripts/**"
-      - ".github/workflows/update-termux-catalog.yml"
   workflow_dispatch:
 
 permissions:

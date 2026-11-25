@@ -12,8 +12,11 @@ android {
         applicationId = "com.pyserver.v2"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "2.4.0"
+        versionCode = 7
+        versionName = "2.5.0"
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildFeatures {
@@ -39,4 +42,6 @@ dependencies {
     implementation("androidx.compose.animation:animation")
     implementation("androidx.compose.material3:material3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // APK-bundled native FFmpeg/JNI runtime. Keep pinned; executable codec updates are full APK updates.
+    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
 }
