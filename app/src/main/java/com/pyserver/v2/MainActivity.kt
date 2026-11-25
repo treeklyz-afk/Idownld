@@ -5,23 +5,26 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -37,53 +40,100 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PyServerAnimatedApp() }
+        setContent { PyServerMediaApp() }
     }
 }
 
 @Composable
-fun PyServerAnimatedApp() {
+fun AnimatedMediaSpinner(label: String, accent: Color) {
+    val transition = rememberInfiniteTransition(label = "gif_spinner_anim")
+    val scale = transition.animateFloat(
+        initialValue = 0.85f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 700),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "spinner_pulse"
+    )
+
+    Card(
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1626)),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, accent.copy(alpha = 0.45f), RoundedCornerShape(16.dp))
+    ) {
+        Row(
+            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(44.dp)
+                    .scale(scale.value)
+                    .background(accent.copy(alpha = 0.15f), CircleShape)
+            ) {
+                CircularProgressIndicator(
+                    color = accent,
+                    strokeWidth = 3.dp,
+                    modifier = Modifier.size(28.dp)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    label,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "Animated Media Pipeline Active",
+                    color = accent,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun PyServerMediaApp() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    val animCfg = remember { PythonRunner.loadAnimationConfig(context) }
-    val scaleMin = animCfg.optDouble("scale_min", 0.96).toFloat()
-    val scaleMax = animCfg.optDouble("scale_max", 1.04).toFloat()
-
-    val infiniteTransition = rememberInfiniteTransition(label = "pyserver_pulse")
-    val pulseScale = infiniteTransition.animateFloat(
-        initialValue = scaleMin,
-        targetValue = scaleMax,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "badge_scale"
-    )
-
-    val tabState = remember { mutableStateOf(0) }
+    val tabState = remember { mutableStateOf(0) } // 0: Media, 1: PKG & Terminal, 2: Token & BG
     val mediaUrlState = remember { mutableStateOf("") }
     val useAria2State = remember { mutableStateOf(true) }
-    val usePyBridgeState = remember { mutableStateOf(true) }
+    val usePyBridgeState = remember { mutableStateOf(false) }
+    val showConsoleState = remember { mutableStateOf(false) } // Console hidden by default
+
     val analysisState = remember { mutableStateOf<MediaAnalysis?>(null) }
     val selectedFormatState = remember { mutableStateOf<FormatChoice?>(null) }
 
     val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
     val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    val versionMapState = remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
+    val versionMapState = remember { mutableStateOf>(emptyMap()) }
     val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+
+    // Terminal state inside PKG tab
+    val termCmdState = remember { mutableStateOf("tools") }
+    val termOutputState = remember { mutableStateOf("Terminal ready. Type 'help', 'tools', 'ls', or 'pkg install <id>'.") }
 
     val gatewayUrlState = remember { mutableStateOf("https://your-gateway.onrender.com") }
     val apiTokenState = remember { mutableStateOf("") }
     val bgActiveState = remember { mutableStateOf(false) }
 
     val workingState = remember { mutableStateOf(false) }
-    val statusMsgState = remember { mutableStateOf("Booting animated engine...") }
+    val loaderTitleState = remember { mutableStateOf("Analyzing media...") }
+    val statusMsgState = remember { mutableStateOf("Paste any URL & tap Analyze") }
     val logsState = remember { mutableStateOf(listOf<String>()) }
 
-    fun appendLog(msg: String) {
-        logsState.value = (logsState.value + msg).takeLast(12)
+    fun appendLog(line: String) {
+        logsState.value = (logsState.value + line).takeLast(12)
     }
 
     fun refreshTools() {
@@ -95,25 +145,17 @@ fun PyServerAnimatedApp() {
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            AssetsAndPackageManager.extractAssetsOnStartup(context) { line ->
-                appendLog(line)
-            }
+            AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
         }
         refreshTools()
-        statusMsgState.value = "Ready • GIF + JSON Animation + Engine"
     }
 
-    val bgDark = Color(0xFF070A10)
-    val cardDark = Color(0xFF101724)
-    val borderNeon = Color(0xFF1E293B)
-    val cyanAccent = Color(0xFF00F0FF)
+    val bgDark = Color(0xFF060911)
+    val cardDark = Color(0xFF0F172A)
+    val borderSubtle = Color(0xFF1E293B)
+    val cyanAccent = Color(0xFF00E5FF)
+    val violetAccent = Color(0xFF8B5CF6)
     val greenOk = Color(0xFF10B981)
-    val amberWarn = Color(0xFFF59E0B)
-
-    val badgeColorState = animateColorAsState(
-        targetValue = if (bgActiveState.value) greenOk else cyanAccent,
-        label = "badge_color"
-    )
 
     Scaffold(
         containerColor = bgDark,
@@ -126,20 +168,20 @@ fun PyServerAnimatedApp() {
                 NavigationBarItem(
                     selected = tabState.value == 0,
                     onClick = { tabState.value = 0 },
-                    icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tabState.value == 0) cyanAccent else Color.Gray) },
-                    label = { Text("Downloader", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    icon = { Text("▶", color = if (tabState.value == 0) cyanAccent else Color.Gray) },
+                    label = { Text("Media", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tabState.value == 1,
                     onClick = { tabState.value = 1; refreshTools() },
-                    icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tabState.value == 1) cyanAccent else Color.Gray) },
-                    label = { Text("Packages", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    icon = { Text(">_", color = if (tabState.value == 1) cyanAccent else Color.Gray) },
+                    label = { Text("PKG Term", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tabState.value == 2,
                     onClick = { tabState.value = 2 },
-                    icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tabState.value == 2) cyanAccent else Color.Gray) },
-                    label = { Text("Token & BG", maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    icon = { Text("⚡", color = if (tabState.value == 2) cyanAccent else Color.Gray) },
+                    label = { Text("Token BG", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
             }
         }
@@ -150,20 +192,21 @@ fun PyServerAnimatedApp() {
                 .padding(pad)
                 .imePadding()
                 .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Top Header Card
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = cardDark),
-                    shape = RoundedCornerShape(16.dp),
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                        .background(
+                            Brush.horizontalGradient(listOf(Color(0xFF0F172A), Color(0xFF172038))),
+                            RoundedCornerShape(18.dp)
+                        )
+                        .border(1.dp, borderSubtle, RoundedCornerShape(18.dp))
+                        .padding(14.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -175,19 +218,12 @@ fun PyServerAnimatedApp() {
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
-                            Surface(
-                                color = badgeColorState.value.copy(alpha = 0.16f),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.scale(pulseScale.value)
-                            ) {
-                                Text(
-                                    if (bgActiveState.value) "BG LIVE" else "ANIM READY",
-                                    color = badgeColorState.value,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
+                            Text(
+                                if (bgActiveState.value) "● BG ACTIVE" else "● READY",
+                                color = if (bgActiveState.value) greenOk else cyanAccent,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                         Text(
                             statusMsgState.value,
@@ -200,15 +236,22 @@ fun PyServerAnimatedApp() {
                 }
             }
 
+            // Animated Loading / GIF Spinner when busy
+            if (workingState.value) {
+                item {
+                    AnimatedMediaSpinner(label = loaderTitleState.value, accent = cyanAccent)
+                }
+            }
+
             when (tabState.value) {
                 0 -> {
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(18.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                .border(1.dp, borderSubtle, RoundedCornerShape(18.dp))
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
@@ -217,42 +260,49 @@ fun PyServerAnimatedApp() {
                                 OutlinedTextField(
                                     value = mediaUrlState.value,
                                     onValueChange = { mediaUrlState.value = it },
-                                    label = { Text("Paste Video / GIF / Media URL") },
+                                    label = { Text("Paste Any Video / Stream URL") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("Python Bridge", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                    Switch(checked = usePyBridgeState.value, onCheckedChange = { usePyBridgeState.value = it })
-                                }
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                    Text("aria2c Multi-Stream", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     Switch(checked = useAria2State.value, onCheckedChange = { useAria2State.value = it })
                                 }
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Show Debug Console", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                    Switch(checked = showConsoleState.value, onCheckedChange = { showConsoleState.value = it })
+                                }
+
                                 Row(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     OutlinedButton(
-                                        onClick = { clipboard.getText()?.text?.let { mediaUrlState.value = it } },
+                                        onClick = {
+                                            clipboard.getText()?.text?.let {
+                                                mediaUrlState.value = it.trim()
+                                            }
+                                        },
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Text("Paste", color = Color.White, maxLines = 1)
+                                        Text("Paste", color = Color.White, maxLines = 1, softWrap = false)
                                     }
                                     Button(
                                         onClick = {
                                             workingState.value = true
-                                            statusMsgState.value = "Analyzing..."
+                                            loaderTitleState.value = "Analyzing URL & Resolutions..."
                                             scope.launch {
                                                 val res = withContext(Dispatchers.IO) {
                                                     MediaDownloaderEngine.analyzeUrl(
@@ -265,9 +315,11 @@ fun PyServerAnimatedApp() {
                                                 res.onSuccess { info ->
                                                     analysisState.value = info
                                                     selectedFormatState.value = info.formats.firstOrNull()
-                                                    statusMsgState.value = "Found ${info.formats.size} formats"
+                                                    statusMsgState.value = "Loaded ${info.formats.size} formats"
+                                                    appendLog("Analyzed: ${info.title}")
                                                 }.onFailure { err ->
-                                                    statusMsgState.value = "Error: ${err.message}"
+                                                    statusMsgState.value = err.message ?: "Analyze error"
+                                                    appendLog("Analyze error: ${err.message}")
                                                 }
                                             }
                                         },
@@ -279,7 +331,7 @@ fun PyServerAnimatedApp() {
                                         ),
                                         modifier = Modifier.weight(2f)
                                     ) {
-                                        Text(if (workingState.value) "Working..." else "Analyze", maxLines = 1)
+                                        Text("Analyze", fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
                                     }
                                 }
                             }
@@ -290,10 +342,15 @@ fun PyServerAnimatedApp() {
                         item {
                             Card(
                                 colors = CardDefaults.cardColors(containerColor = cardDark),
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(1.dp, violetAccent.copy(alpha = 0.5f), RoundedCornerShape(16.dp))
                             ) {
-                                Column(modifier = Modifier.padding(14.dp)) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
                                     Text(
                                         info.title,
                                         color = Color.White,
@@ -302,32 +359,33 @@ fun PyServerAnimatedApp() {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        "${info.extractor} • ${info.duration}",
-                                        color = Color(0xFF94A3B8),
+                                        "${info.extractor} • ${info.duration} • ${info.formats.size} formats",
+                                        color = cyanAccent,
                                         style = MaterialTheme.typography.bodySmall
                                     )
                                 }
                             }
                         }
+
                         items(info.formats) { fmt ->
-                            val picked = selectedFormatState.value == fmt
+                            val chosen = selectedFormatState.value == fmt
                             Card(
                                 colors = CardDefaults.cardColors(
-                                    containerColor = if (picked) Color(0xFF17253B) else cardDark
+                                    containerColor = if (chosen) Color(0xFF17253B) else cardDark
                                 ),
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .border(
                                         1.dp,
-                                        if (picked) cyanAccent else borderNeon,
-                                        RoundedCornerShape(12.dp)
+                                        if (chosen) cyanAccent else borderSubtle,
+                                        RoundedCornerShape(14.dp)
                                     )
                                     .clickable { selectedFormatState.value = fmt }
                             ) {
                                 Row(
                                     modifier = Modifier
-                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
                                         .fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
@@ -349,18 +407,19 @@ fun PyServerAnimatedApp() {
                                         )
                                     }
                                     RadioButton(
-                                        selected = picked,
+                                        selected = chosen,
                                         onClick = { selectedFormatState.value = fmt }
                                     )
                                 }
                             }
                         }
+
                         item {
                             Button(
                                 onClick = {
                                     val fmt = selectedFormatState.value ?: return@Button
                                     workingState.value = true
-                                    statusMsgState.value = "Downloading ${fmt.titleLabel}..."
+                                    loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
                                             MediaDownloaderEngine.downloadMedia(
@@ -371,60 +430,94 @@ fun PyServerAnimatedApp() {
                                             ) { line -> appendLog(line) }
                                         }
                                         workingState.value = false
-                                        statusMsgState.value = res.getOrElse { err -> "Failed: ${err.message}" }
+                                        statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
+                                        appendLog(statusMsgState.value)
                                     }
                                 },
                                 enabled = !workingState.value && selectedFormatState.value != null,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = cyanAccent,
                                     contentColor = Color.Black
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Download Selected Format")
+                                Text("Download Format", fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
 
                 1 -> {
+                    // Terminal Runner inside PKG tab
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                .border(1.dp, borderSubtle, RoundedCornerShape(16.dp))
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
-                                toolStatusesState.value.forEach { st ->
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(st.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                        Text(
-                                            if (st.installed) "Ready" else "Missing",
-                                            color = if (st.installed) greenOk else amberWarn,
-                                            style = MaterialTheme.typography.bodySmall
-                                        )
-                                    }
+                                Text("PKG Terminal", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = termCmdState.value,
+                                    onValueChange = { termCmdState.value = it },
+                                    label = { Text("Command (help, tools, ls, pkg install yt-dlp)") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Button(
+                                    onClick = {
+                                        workingState.value = true
+                                        loaderTitleState.value = "Running terminal command..."
+                                        scope.launch {
+                                            val out = withContext(Dispatchers.IO) {
+                                                AssetsAndPackageManager.runTerminalCommand(context, termCmdState.value)
+                                            }
+                                            workingState.value = false
+                                            termOutputState.value = out
+                                        }
+                                    },
+                                    enabled = !workingState.value,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = cyanAccent,
+                                        contentColor = Color.Black
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Execute Command", fontWeight = FontWeight.Bold)
+                                }
+                                Surface(
+                                    color = Color(0xFF05080F),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(
+                                        termOutputState.value,
+                                        color = greenOk,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(12.dp)
+                                    )
                                 }
                             }
                         }
                     }
+
+                    // GitHub Manifest Package Manager
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                .border(1.dp, borderSubtle, RoundedCornerShape(16.dp))
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
@@ -434,14 +527,16 @@ fun PyServerAnimatedApp() {
                                     value = manifestUrlState.value,
                                     onValueChange = { manifestUrlState.value = it },
                                     label = { Text("GitHub manifest.json URL") },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Button(
                                     onClick = {
                                         workingState.value = true
-                                        AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
+                                        loaderTitleState.value = "Syncing packages..."
                                         scope.launch {
+                                            AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
                                             val res = withContext(Dispatchers.IO) {
                                                 AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value)
                                             }
@@ -449,9 +544,9 @@ fun PyServerAnimatedApp() {
                                             res.onSuccess { list ->
                                                 packagesState.value = list
                                                 refreshTools()
-                                                statusMsgState.value = "Loaded ${list.size} packages"
+                                                statusMsgState.value = "${list.size} packages ready"
                                             }.onFailure { err ->
-                                                statusMsgState.value = "Error: ${err.message}"
+                                                statusMsgState.value = err.message ?: "Manifest error"
                                             }
                                         }
                                     },
@@ -463,69 +558,49 @@ fun PyServerAnimatedApp() {
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Fetch Manifest & Check Updates")
+                                    Text("Fetch Manifest")
                                 }
                             }
                         }
                     }
+
                     items(packagesState.value) { pkg ->
                         val localVer = versionMapState.value[pkg.id]
-                        val installedTag = if (localVer != null) "v$localVer" else "None"
-                        val action = when {
-                            localVer == null -> "Install"
-                            localVer != pkg.version -> "Update"
-                            else -> "Reinstall"
-                        }
+                        val btnLabel = if (localVer == null) "Install" else "Update"
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(14.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
+                                .border(1.dp, borderSubtle, RoundedCornerShape(14.dp))
                         ) {
                             Row(
-                                modifier = Modifier
-                                    .padding(12.dp)
-                                    .fillMaxWidth(),
+                                modifier = Modifier.padding(12.dp).fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                                    Text(
-                                        pkg.name,
-                                        color = Color.White,
-                                        fontWeight = FontWeight.Bold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        "v${pkg.version} • Installed: $installedTag",
-                                        color = Color(0xFF94A3B8),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
+                                    Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text("v${pkg.version} • Installed: ${localVer ?: "None"}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
                                 }
                                 Button(
                                     onClick = {
                                         workingState.value = true
+                                        loaderTitleState.value = "Installing ${pkg.name}..."
                                         scope.launch {
                                             val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.installPackage(context, pkg) { prog ->
-                                                    statusMsgState.value = prog
-                                                }
+                                                AssetsAndPackageManager.installPackage(context, pkg) { statusMsgState.value = it }
                                             }
                                             workingState.value = false
                                             refreshTools()
-                                            statusMsgState.value = res.getOrElse { err -> "Failed: ${err.message}" }
+                                            statusMsgState.value = res.getOrElse { it.message ?: "Failed" }
                                         }
                                     },
                                     enabled = !workingState.value,
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = cyanAccent,
-                                        contentColor = Color.Black
-                                    )
+                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black)
                                 ) {
-                                    Text(action, maxLines = 1)
+                                    Text(btnLabel, maxLines = 1, softWrap = false)
                                 }
                             }
                         }
@@ -539,7 +614,7 @@ fun PyServerAnimatedApp() {
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                .border(1.dp, borderSubtle, RoundedCornerShape(16.dp))
                         ) {
                             Column(
                                 modifier = Modifier.padding(14.dp),
@@ -582,8 +657,8 @@ fun PyServerAnimatedApp() {
                                 )
                                 OutlinedButton(
                                     onClick = {
-                                        val base = gatewayUrlState.value.trim().trimEnd('/')
-                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
+                                        val clean = gatewayUrlState.value.trim().trimEnd('/')
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$clean/tokenrender")))
                                     },
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -596,33 +671,28 @@ fun PyServerAnimatedApp() {
                 }
             }
 
+            // Hidden by default; toggles on when user switches "Show Debug Console"
             item {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)),
-                    shape = RoundedCornerShape(14.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
-                ) {
-                    Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                AnimatedVisibility(visible = showConsoleState.value) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF05080F)),
+                        shape = RoundedCornerShape(14.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, borderSubtle, RoundedCornerShape(14.dp))
                     ) {
-                        Text(
-                            "Engine Console",
-                            color = cyanAccent,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        logsState.value.forEach { line ->
-                            Text(
-                                line,
-                                color = Color(0xFFCBD5E1),
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Debug Console", color = cyanAccent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                            logsState.value.forEach { line ->
+                                Text(
+                                    line,
+                                    color = Color(0xFFCBD5E1),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     }
                 }

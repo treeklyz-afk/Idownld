@@ -3,8 +3,10 @@ package com.pyserver.v2
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -19,9 +21,8 @@ data class ManifestPackage(
 
 data class ToolStatus(
     val name: String,
-    val installed: Boolean,
-    val version: String?,
-    val path: String
+    val ready: Boolean,
+    val info: String
 )
 
 object AssetsAndPackageManager {
@@ -53,18 +54,18 @@ object AssetsAndPackageManager {
 
     fun extractAssetsOnStartup(context: Context, onLog: (String) -> Unit = {}) {
         PythonRunner.extractPythonScripts(context)
-        val assetFolders = listOf("tools" to binDir(context), "packages" to pkgDir(context))
-        for ((folder, targetRoot) in assetFolders) {
+        val folders = listOf("tools" to binDir(context), "packages" to pkgDir(context))
+        for ((folder, root) in folders) {
             try {
-                val files = context.assets.list(folder) ?: emptyArray()
-                for (name in files) {
-                    val outFile = File(targetRoot, name)
-                    context.assets.open("$folder/$name").use { input ->
-                        FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                val list = context.assets.list(folder) ?: emptyArray()
+                for (name in list) {
+                    val out = File(root, name)
+                    context.assets.open("$folder/$name").use { inp ->
+                        FileOutputStream(out).use { outp -> inp.copyTo(outp) }
                     }
-                    outFile.setReadable(true, false)
-                    outFile.setExecutable(true, false)
-                    onLog("Loaded asset: $folder/$name")
+                    out.setReadable(true, false)
+                    out.setExecutable(true, false)
+                    onLog("Synced asset: $folder/$name")
                 }
             } catch (_: Exception) {
             }
@@ -72,37 +73,95 @@ object AssetsAndPackageManager {
     }
 
     fun resolveTool(context: Context, name: String): String {
-        val candidates = listOf(
-            File(binDir(context), name),
-            File(pkgDir(context), name),
-            File(context.applicationInfo.nativeLibraryDir, "lib$name.so")
-        )
-        for (f in candidates) {
-            if (f.exists()) {
-                f.setReadable(true, false)
-                f.setExecutable(true, false)
-                if (f.canExecute()) return f.absolutePath
-            }
+        val clean = name.removePrefix("lib").removeSuffix(".so")
+        val nativeCandidate = File(context.applicationInfo.nativeLibraryDir, "lib$clean.so")
+        if (nativeCandidate.exists() && nativeCandidate.canExecute()) {
+            return nativeCandidate.absolutePath
         }
-        return name
+        val localBin = File(binDir(context), clean)
+        if (localBin.exists() && localBin.canExecute()) {
+            return localBin.absolutePath
+        }
+        val localPkg = File(pkgDir(context), clean)
+        if (localPkg.exists() && localPkg.canExecute()) {
+            return localPkg.absolutePath
+        }
+        return clean
+    }
+
+    fun canExecuteFile(path: String): Boolean {
+        val f = File(path)
+        if (!f.exists() || !f.canExecute()) return false
+        return try {
+            val p = ProcessBuilder(f.absolutePath, "--version")
+                .redirectErrorStream(true)
+                .start()
+            p.inputStream.bufferedReader().readText()
+            p.waitFor() == 0
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun getCoreToolsStatus(context: Context): List<ToolStatus> {
-        val core = listOf("yt-dlp", "ffmpeg", "ffprobe", "aria2c", "python3")
-        return core.map { tool ->
-            val resolved = if (tool == "python3") {
-                PythonRunner.findPythonExecutable(context) ?: "python3"
-            } else {
-                resolveTool(context, tool)
-            }
-            val file = File(resolved)
-            val exists = file.exists() && file.canExecute()
+        val tools = listOf("yt-dlp", "ffmpeg", "ffprobe", "aria2c")
+        return tools.map { name ->
+            val path = resolveTool(context, name)
+            val runnable = canExecuteFile(path)
+            val ver = getInstalledVersion(context, name)
             ToolStatus(
-                name = tool,
-                installed = exists,
-                version = getInstalledVersion(context, tool) ?: if (exists) "Ready" else null,
-                path = resolved
+                name = name,
+                ready = runnable,
+                info = when {
+                    runnable && ver != null -> "Active (v$ver)"
+                    runnable -> "Active (Native/Asset)"
+                    File(path).exists() -> "Fallback Mode"
+                    else -> "Auto-Fallback Ready"
+                }
             )
+        }
+    }
+
+    fun runTerminalCommand(context: Context, rawCmd: String): String {
+        val cmd = rawCmd.trim()
+        if (cmd.isEmpty()) return "Enter a command (e.g. help, tools, ls, pkg list)"
+
+        return when {
+            cmd == "help" ->
+                "Commands: help | tools | ls | pkg install <id> | <shell command>"
+            cmd == "tools" ->
+                getCoreToolsStatus(context).joinToString("\n") {
+                    "${it.name}: ${it.info}"
+                }
+            cmd == "ls" -> {
+                val b = binDir(context).listFiles()?.joinToString(", ") { it.name } ?: ""
+                val p = pkgDir(context).listFiles()?.joinToString(", ") { it.name } ?: ""
+                "bin: [$b]\npackages: [$p]"
+            }
+            cmd.startsWith("pkg install ") -> {
+                val targetId = cmd.removePrefix("pkg install ").trim()
+                val manifestRes = fetchManifest(context)
+                val pkg = manifestRes.getOrNull()?.firstOrNull {
+                    it.id.equals(targetId, true) || it.name.equals(targetId, true)
+                } ?: return "Package '$targetId' not found in manifest"
+                installPackage(context, pkg).fold(
+                    onSuccess = { it },
+                    onFailure = { "Install failed: ${it.message}" }
+                )
+            }
+            else -> {
+                try {
+                    val proc = ProcessBuilder("sh", "-c", cmd)
+                        .directory(pkgDir(context))
+                        .redirectErrorStream(true)
+                        .start()
+                    val out = BufferedReader(InputStreamReader(proc.inputStream)).readText()
+                    val code = proc.waitFor()
+                    out.ifBlank { "Exit code: $code" }.take(2000)
+                } catch (e: Exception) {
+                    "Shell restricted by Android: ${e.message}"
+                }
+            }
         }
     }
 
@@ -148,9 +207,9 @@ object AssetsAndPackageManager {
         onProgress: (String) -> Unit = {}
     ): Result<String> {
         return try {
-            val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
-            val dest = File(targetDir, pkg.filename)
-            val temp = File(targetDir, "${pkg.filename}.download")
+            val dir = if (pkg.category == "package") pkgDir(context) else binDir(context)
+            val dest = File(dir, pkg.filename)
+            val temp = File(dir, "${pkg.filename}.tmp")
             onProgress("Downloading ${pkg.name} v${pkg.version}...")
             val conn = (URL(pkg.url).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -161,15 +220,15 @@ object AssetsAndPackageManager {
             if (conn.responseCode !in 200..299) {
                 return Result.failure(Exception("HTTP ${conn.responseCode}"))
             }
-            conn.inputStream.use { input ->
-                FileOutputStream(temp).use { output ->
+            conn.inputStream.use { inp ->
+                FileOutputStream(temp).use { outp ->
                     val buf = ByteArray(16384)
                     while (true) {
-                        val n = input.read(buf)
+                        val n = inp.read(buf)
                         if (n == -1) break
-                        output.write(buf, 0, n)
+                        outp.write(buf, 0, n)
                     }
-                    output.flush()
+                    outp.flush()
                 }
             }
             conn.disconnect()
@@ -181,7 +240,7 @@ object AssetsAndPackageManager {
             dest.setReadable(true, false)
             dest.setExecutable(true, false)
             setInstalledVersion(context, pkg.id, pkg.version)
-            Result.success("Installed ${pkg.name} (v${pkg.version})")
+            Result.success("Installed ${pkg.name} v${pkg.version}")
         } catch (e: Exception) {
             Result.failure(e)
         }

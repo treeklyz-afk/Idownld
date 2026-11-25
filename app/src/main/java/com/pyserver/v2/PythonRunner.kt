@@ -32,9 +32,7 @@ object PythonRunner {
             JSONObject(raw)
         } catch (_: Exception) {
             JSONObject().apply {
-                put("fps", 15)
-                put("scale_min", 0.96)
-                put("scale_max", 1.04)
+                put("fps", 24)
                 put("gif_fps", 12)
                 put("gif_width", 480)
             }
@@ -42,6 +40,8 @@ object PythonRunner {
     }
 
     fun findPythonExecutable(context: Context): String? {
+        val nativePy = File(context.applicationInfo.nativeLibraryDir, "libpython3.so")
+        if (nativePy.exists() && nativePy.canExecute()) return nativePy.absolutePath
         val candidates = listOf(
             File(context.filesDir, "bin/python3"),
             File(context.filesDir, "packages/python3"),
@@ -56,11 +56,9 @@ object PythonRunner {
 
     fun analyzeWithPythonBridge(context: Context, url: String): Result<MediaAnalysis> {
         val pyBin = findPythonExecutable(context)
-            ?: return Result.failure(Exception("Python runtime not found"))
+            ?: return Result.failure(Exception("Python runtime not present"))
         val scriptFile = File(scriptsDir(context), "engine_bridge.py")
-        if (!scriptFile.exists()) {
-            return Result.failure(Exception("engine_bridge.py missing"))
-        }
+        if (!scriptFile.exists()) return Result.failure(Exception("Bridge script missing"))
         val ytdlpBin = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
 
         return try {
@@ -68,26 +66,24 @@ object PythonRunner {
                 .redirectErrorStream(false)
                 .start()
             val stdout = BufferedReader(InputStreamReader(proc.inputStream)).readText()
-            val stderr = BufferedReader(InputStreamReader(proc.errorStream)).readText()
             val code = proc.waitFor()
-            if (stdout.isBlank()) {
-                return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+            if (code != 0 || stdout.isBlank()) {
+                return Result.failure(Exception("Python bridge exited with $code"))
             }
-
             val root = JSONObject(stdout)
             if (!root.optBoolean("ok", false)) {
-                return Result.failure(Exception(root.optString("error", "Bridge error")))
+                return Result.failure(Exception(root.optString("error", "Bridge failed")))
             }
             val arr: JSONArray = root.optJSONArray("formats") ?: JSONArray()
             val formats = mutableListOf<FormatChoice>()
             for (i in 0 until arr.length()) {
-                val item = arr.getJSONObject(i)
+                val o = arr.getJSONObject(i)
                 formats.add(
                     FormatChoice(
-                        formatId = item.optString("format_id", "best"),
-                        titleLabel = item.optString("label", "Format"),
-                        mediaType = item.optString("media_type", "video"),
-                        metaInfo = "Python Bridge"
+                        formatId = o.optString("format_id", "best"),
+                        titleLabel = o.optString("label", "Video"),
+                        mediaType = o.optString("media_type", "video"),
+                        metaInfo = o.optString("meta", "Python Engine")
                     )
                 )
             }

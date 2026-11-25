@@ -29,8 +29,8 @@ class BackgroundEngineService : Service() {
         token = intent?.getStringExtra("token")?.trim() ?: ""
         createChannel()
         val notif: Notification = NotificationCompat.Builder(this, "pyserver2_channel")
-            .setContentTitle("PyServer 2.0 Engine Running")
-            .setContentText("Background service & Render token bridge active")
+            .setContentTitle("PyServer 2.0 Engine Active")
+            .setContentText("Background service & token bridge running")
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setOngoing(true)
             .build()

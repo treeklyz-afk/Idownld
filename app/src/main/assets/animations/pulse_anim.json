@@ -1,8 +1,6 @@
 {
-  "animation_name": "pyserver_pulse",
-  "fps": 15,
-  "scale_min": 0.96,
-  "scale_max": 1.04,
+  "animation_name": "pyserver_loader",
+  "fps": 24,
   "gif_fps": 12,
   "gif_width": 480
 }
