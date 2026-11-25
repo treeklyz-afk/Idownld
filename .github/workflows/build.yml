@@ -1,8 +1,9 @@
-name: Build PyServer 2.0 Jetpack Compose APK
+name: Build PyServer 2.0 APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
     paths-ignore:
       - ".github/workflows/build.yml"
   workflow_dispatch:
@@ -11,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  scaffold-push-and-build:
+  build-pyserver-apk:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,10 +20,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: main
+          fetch-depth: 0
 
-      - name: Scaffold complete Jetpack Compose project sources
+      - name: Scaffold mobile-friendly Jetpack Compose project & Python bridge
         run: |
+          set -e
           mkdir -p app/src/main/java/com/pyserver/v2
+          mkdir -p app/src/main/res/values
           mkdir -p app/src/main/assets/tools
           mkdir -p app/src/main/assets/packages
           mkdir -p app/src/main/assets/scripts
@@ -42,12 +46,12 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "PyServer2Studio"
+          rootProject.name = "PyServer2Mobile"
           include(":app")
           EOF
 
           cat <<'EOF' > gradle.properties
-          org.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8
+          org.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           kotlin.code.style=official
           EOF
@@ -100,9 +104,14 @@ jobs:
               implementation("androidx.compose.ui:ui")
               implementation("androidx.compose.ui:ui-graphics")
               implementation("androidx.compose.material3:material3")
-              implementation("androidx.compose.material:material-icons-extended")
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
           }
+          EOF
+
+          cat <<'EOF' > app/src/main/res/values/strings.xml
+          <resources>
+              <string name="app_name">PyServer 2.0</string>
+          </resources>
           EOF
 
           cat <<'EOF' > app/src/main/AndroidManifest.xml
@@ -118,7 +127,7 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:label="PyServer 2.0 Studio"
+                  android:label="@string/app_name"
                   android:usesCleartextTraffic="true"
                   android:supportsRtl="true"
                   android:theme="@android:style/Theme.Material.NoActionBar">
@@ -126,6 +135,7 @@ jobs:
                   <activity
                       android:name=".MainActivity"
                       android:exported="true"
+                      android:windowSoftInputMode="adjustResize"
                       android:configChanges="orientation|screenSize|screenLayout">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
@@ -143,9 +153,10 @@ jobs:
           EOF
 
           cat <<'EOF' > app/src/main/assets/scripts/engine_bridge.py
-          import sys
           import json
           import subprocess
+          import sys
+
 
           def main():
               if len(sys.argv) < 3:
@@ -160,7 +171,7 @@ jobs:
                       [ytdlp_bin, "-J", "--no-playlist", url],
                       capture_output=True,
                       text=True,
-                      timeout=45
+                      timeout=45,
                   )
                   if proc.returncode != 0:
                       print(json.dumps({"ok": False, "error": proc.stderr.strip() or "yt-dlp failed"}))
@@ -169,34 +180,45 @@ jobs:
                   data = json.loads(proc.stdout)
                   formats = []
                   seen = set()
+
                   for f in data.get("formats", []):
                       vcodec = f.get("vcodec", "none")
                       height = f.get("height")
                       fmt_id = f.get("format_id")
                       ext = f.get("ext", "mp4")
                       if vcodec != "none" and height and fmt_id:
-                          label = f"{height}p ({ext.upper()})"
+                          label = f"{height}p ({str(ext).upper()})"
                           if label not in seen:
                               seen.add(label)
                               formats.append({
                                   "format_id": str(fmt_id),
                                   "label": label,
-                                  "media_type": "video"
+                                  "media_type": "video",
                               })
 
-                  formats.sort(key=lambda x: int(x["label"].split("p")[0]) if x["label"].split("p")[0].isdigit() else 0, reverse=True)
-                  formats.append({"format_id": "bestaudio", "label": "Audio Only (MP3)", "media_type": "audio"})
+                  formats.sort(
+                      key=lambda x: int(x["label"].split("p")[0])
+                      if x["label"].split("p")[0].isdigit()
+                      else 0,
+                      reverse=True,
+                  )
+                  formats.append({
+                      "format_id": "bestaudio",
+                      "label": "Audio Only (MP3)",
+                      "media_type": "audio",
+                  })
 
                   print(json.dumps({
                       "ok": True,
                       "title": data.get("title", "Media"),
                       "extractor": data.get("extractor_key", "PythonBridge"),
                       "duration": data.get("duration_string", "N/A"),
-                      "formats": formats
+                      "formats": formats,
                   }))
-              except Exception as e:
-                  print(json.dumps({"ok": False, "error": str(e)}))
+              except Exception as exc:
+                  print(json.dumps({"ok": False, "error": str(exc)}))
                   sys.exit(3)
+
 
           if __name__ == "__main__":
               main()
@@ -248,7 +270,9 @@ jobs:
                   val pyBin = findPythonExecutable(context)
                       ?: return Result.failure(Exception("Python runtime not found"))
                   val scriptFile = File(scriptsDir(context), "engine_bridge.py")
-                  if (!scriptFile.exists()) return Result.failure(Exception("engine_bridge.py missing"))
+                  if (!scriptFile.exists()) {
+                      return Result.failure(Exception("engine_bridge.py missing"))
+                  }
                   val ytdlpBin = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
 
                   return try {
@@ -258,7 +282,9 @@ jobs:
                       val stdout = BufferedReader(InputStreamReader(proc.inputStream)).readText()
                       val stderr = BufferedReader(InputStreamReader(proc.errorStream)).readText()
                       val code = proc.waitFor()
-                      if (stdout.isBlank()) return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+                      if (stdout.isBlank()) {
+                          return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+                      }
 
                       val root = JSONObject(stdout)
                       if (!root.optBoolean("ok", false)) {
@@ -437,7 +463,11 @@ jobs:
                   }
               }
 
-              fun installPackage(context: Context, pkg: ManifestPackage, onProgress: (String) -> Unit = {}): Result<String> {
+              fun installPackage(
+                  context: Context,
+                  pkg: ManifestPackage,
+                  onProgress: (String) -> Unit = {}
+              ): Result<String> {
                   return try {
                       val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
                       val dest = File(targetDir, pkg.filename)
@@ -483,7 +513,8 @@ jobs:
                       val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
                       val dest = File(targetDir, pkg.filename)
                       if (dest.exists()) dest.delete()
-                      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("pkg_ver_${pkg.id}").apply()
+                      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                          .edit().remove("pkg_ver_${pkg.id}").apply()
                       Result.success("Removed ${pkg.name}")
                   } catch (e: Exception) {
                       Result.failure(e)
@@ -523,7 +554,11 @@ jobs:
               fun outputDirectory(context: Context): File =
                   File(context.getExternalFilesDir(null), "PyServer2_Media").apply { mkdirs() }
 
-              fun analyzeUrl(context: Context, rawUrl: String, preferPythonBridge: Boolean = true): Result<MediaAnalysis> {
+              fun analyzeUrl(
+                  context: Context,
+                  rawUrl: String,
+                  preferPythonBridge: Boolean = true
+              ): Result<MediaAnalysis> {
                   val url = rawUrl.trim()
                   if (url.isEmpty()) return Result.failure(Exception("URL empty"))
 
@@ -620,9 +655,12 @@ jobs:
                           onLog("Using aria2c")
                       }
                       when {
-                          choice.mediaType == "audio" -> cmd.addAll(listOf("-f", "bestaudio/best", "-x", "--audio-format", "mp3"))
-                          choice.formatId == "best" -> cmd.addAll(listOf("-f", "bv*+ba/b", "--merge-output-format", "mp4"))
-                          else -> cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
+                          choice.mediaType == "audio" ->
+                              cmd.addAll(listOf("-f", "bestaudio/best", "-x", "--audio-format", "mp3"))
+                          choice.formatId == "best" ->
+                              cmd.addAll(listOf("-f", "bv*+ba/b", "--merge-output-format", "mp4"))
+                          else ->
+                              cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
                       }
                       cmd.add(url)
                       val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
@@ -640,9 +678,14 @@ jobs:
                   }
               }
 
-              private fun directHttpDownload(url: String, outDir: File, onLog: (String) -> Unit): Result<String> {
+              private fun directHttpDownload(
+                  url: String,
+                  outDir: File,
+                  onLog: (String) -> Unit
+              ): Result<String> {
                   return try {
-                      val name = url.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}.mp4" }
+                      val name = url.substringAfterLast("/").substringBefore("?")
+                          .ifBlank { "media_${System.currentTimeMillis()}.mp4" }
                       val dest = File(outDir, name)
                       onLog("Direct download -> $name")
                       val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -651,7 +694,9 @@ jobs:
                           connectTimeout = 20000
                           readTimeout = 60000
                       }
-                      if (conn.responseCode !in 200..299) return Result.failure(Exception("HTTP ${conn.responseCode}"))
+                      if (conn.responseCode !in 200..299) {
+                          return Result.failure(Exception("HTTP ${conn.responseCode}"))
+                      }
                       conn.inputStream.use { input ->
                           FileOutputStream(dest).use { output ->
                               val buf = ByteArray(16384)
@@ -734,7 +779,11 @@ jobs:
                               val url = obj.getString("url")
                               val fmtId = obj.optString("format_id", "best")
                               val type = obj.optString("media_type", "video")
-                              val res = MediaDownloaderEngine.downloadMedia(this, url, FormatChoice(fmtId, fmtId, type, "Token Job"))
+                              val res = MediaDownloaderEngine.downloadMedia(
+                                  this,
+                                  url,
+                                  FormatChoice(fmtId, fmtId, type, "Token Job")
+                              )
                               sendCompletion(jobId, res.isSuccess, res.getOrElse { it.message ?: "Error" })
                           }
                       }
@@ -766,7 +815,11 @@ jobs:
               private fun createChannel() {
                   if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                       val mgr = getSystemService(NotificationManager::class.java)
-                      val ch = NotificationChannel("pyserver2_channel", "PyServer 2.0 Service", NotificationManager.IMPORTANCE_LOW)
+                      val ch = NotificationChannel(
+                          "pyserver2_channel",
+                          "PyServer 2.0 Service",
+                          NotificationManager.IMPORTANCE_LOW
+                      )
                       mgr.createNotificationChannel(ch)
                   }
               }
@@ -794,10 +847,6 @@ jobs:
           import androidx.compose.foundation.lazy.LazyColumn
           import androidx.compose.foundation.lazy.items
           import androidx.compose.foundation.shape.RoundedCornerShape
-          import androidx.compose.material.icons.Icons
-          import androidx.compose.material.icons.filled.CloudDownload
-          import androidx.compose.material.icons.filled.Extension
-          import androidx.compose.material.icons.filled.Key
           import androidx.compose.material3.*
           import androidx.compose.runtime.*
           import androidx.compose.ui.Alignment
@@ -807,6 +856,7 @@ jobs:
           import androidx.compose.ui.platform.LocalContext
           import androidx.compose.ui.text.font.FontFamily
           import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextOverflow
           import androidx.compose.ui.unit.dp
           import androidx.core.content.ContextCompat
           import kotlinx.coroutines.Dispatchers
@@ -816,12 +866,12 @@ jobs:
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent { PyServerStudioApp() }
+                  setContent { PyServerResponsiveApp() }
               }
           }
 
           @Composable
-          fun PyServerStudioApp() {
+          fun PyServerResponsiveApp() {
               val context = LocalContext.current
               val clipboard = LocalClipboardManager.current
               val scope = rememberCoroutineScope()
@@ -843,16 +893,18 @@ jobs:
               var bgActive by remember { mutableStateOf(false) }
 
               var working by remember { mutableStateOf(false) }
-              var statusMsg by remember { mutableStateOf("Initializing...") }
+              var statusMsg by remember { mutableStateOf("Booting mobile engine...") }
               var logs by remember { mutableStateOf(listOf<String>()) }
 
               fun appendLog(msg: String) {
-                  logs = (logs + msg).takeLast(14)
+                  logs = (logs + msg).takeLast(12)
               }
 
               fun refreshTools() {
                   toolStatuses = AssetsAndPackageManager.getCoreToolsStatus(context)
-                  versionMap = packages.associate { it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id) }
+                  versionMap = packages.associate {
+                      it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id)
+                  }
               }
 
               LaunchedEffect(Unit) {
@@ -860,7 +912,7 @@ jobs:
                       AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
                   }
                   refreshTools()
-                  statusMsg = "Ready • PyServer 2.0 + Python Bridge"
+                  statusMsg = "Ready • Mobile Responsive Engine"
               }
 
               val bgDark = Color(0xFF070A10)
@@ -872,42 +924,84 @@ jobs:
 
               Scaffold(
                   containerColor = bgDark,
+                  modifier = Modifier
+                      .fillMaxSize()
+                      .statusBarsPadding()
+                      .navigationBarsPadding(),
                   bottomBar = {
                       NavigationBar(containerColor = cardDark) {
                           NavigationBarItem(
                               selected = tab == 0,
                               onClick = { tab = 0 },
-                              icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                              label = { Text("Downloader") }
+                              icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tab == 0) cyanAccent else Color.Gray) },
+                              label = { Text("Downloader", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                           NavigationBarItem(
                               selected = tab == 1,
                               onClick = { tab = 1; refreshTools() },
-                              icon = { Icon(Icons.Default.Extension, contentDescription = null) },
-                              label = { Text("Packages") }
+                              icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tab == 1) cyanAccent else Color.Gray) },
+                              label = { Text("Packages", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                           NavigationBarItem(
                               selected = tab == 2,
                               onClick = { tab = 2 },
-                              icon = { Icon(Icons.Default.Key, contentDescription = null) },
-                              label = { Text("Token & BG") }
+                              icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tab == 2) cyanAccent else Color.Gray) },
+                              label = { Text("Token & BG", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                       }
                   }
               ) { pad ->
                   LazyColumn(
-                      modifier = Modifier.fillMaxSize().padding(pad).padding(14.dp),
-                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                      modifier = Modifier
+                          .fillMaxSize()
+                          .padding(pad)
+                          .imePadding()
+                          .padding(horizontal = 12.dp, vertical = 10.dp),
+                      verticalArrangement = Arrangement.spacedBy(10.dp)
                   ) {
                       item {
                           Card(
                               colors = CardDefaults.cardColors(containerColor = cardDark),
                               shape = RoundedCornerShape(16.dp),
-                              modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
                           ) {
-                              Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                  Text("PyServer 2.0", color = cyanAccent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                  Text(statusMsg, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                              Column(
+                                  modifier = Modifier.padding(14.dp),
+                                  verticalArrangement = Arrangement.spacedBy(4.dp)
+                              ) {
+                                  Row(
+                                      modifier = Modifier.fillMaxWidth(),
+                                      horizontalArrangement = Arrangement.SpaceBetween,
+                                      verticalAlignment = Alignment.CenterVertically
+                                  ) {
+                                      Text(
+                                          "PyServer 2.0",
+                                          color = cyanAccent,
+                                          style = MaterialTheme.typography.titleLarge,
+                                          fontWeight = FontWeight.Bold
+                                      )
+                                      Surface(
+                                          color = if (bgActive) greenOk.copy(alpha = 0.16f) else cyanAccent.copy(alpha = 0.14f),
+                                          shape = RoundedCornerShape(8.dp)
+                                      ) {
+                                          Text(
+                                              if (bgActive) "BG LIVE" else "READY",
+                                              color = if (bgActive) greenOk else cyanAccent,
+                                              style = MaterialTheme.typography.labelSmall,
+                                              fontWeight = FontWeight.Bold,
+                                              modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                          )
+                                      }
+                                  }
+                                  Text(
+                                      statusMsg,
+                                      color = Color(0xFFCBD5E1),
+                                      style = MaterialTheme.typography.bodySmall,
+                                      maxLines = 2,
+                                      overflow = TextOverflow.Ellipsis
+                                  )
                               }
                           }
                       }
@@ -918,27 +1012,48 @@ jobs:
                                   Card(
                                       colors = CardDefaults.cardColors(containerColor = cardDark),
                                       shape = RoundedCornerShape(16.dp),
-                                      modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
                                   ) {
-                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                      Column(
+                                          modifier = Modifier.padding(14.dp),
+                                          verticalArrangement = Arrangement.spacedBy(10.dp)
+                                      ) {
                                           OutlinedTextField(
                                               value = mediaUrl,
                                               onValueChange = { mediaUrl = it },
                                               label = { Text("Paste Video / Media URL") },
                                               singleLine = true,
+                                              shape = RoundedCornerShape(12.dp),
                                               modifier = Modifier.fillMaxWidth()
                                           )
-                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                              Text("Python Bridge Analyze", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.SpaceBetween,
+                                              verticalAlignment = Alignment.CenterVertically
+                                          ) {
+                                              Text("Python Bridge", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                               Switch(checked = usePyBridge, onCheckedChange = { usePyBridge = it })
                                           }
-                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                              Text("Use aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.SpaceBetween,
+                                              verticalAlignment = Alignment.CenterVertically
+                                          ) {
+                                              Text("aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                               Switch(checked = useAria2, onCheckedChange = { useAria2 = it })
                                           }
-                                          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                              OutlinedButton(onClick = { clipboard.getText()?.text?.let { mediaUrl = it } }, modifier = Modifier.weight(1f)) {
-                                                  Text("Paste", color = Color.White)
+                                          Row(
+                                              horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                              modifier = Modifier.fillMaxWidth()
+                                          ) {
+                                              OutlinedButton(
+                                                  onClick = { clipboard.getText()?.text?.let { mediaUrl = it } },
+                                                  shape = RoundedCornerShape(12.dp),
+                                                  modifier = Modifier.weight(1f)
+                                              ) {
+                                                  Text("Paste", color = Color.White, maxLines = 1)
                                               }
                                               Button(
                                                   onClick = {
@@ -959,10 +1074,14 @@ jobs:
                                                       }
                                                   },
                                                   enabled = !working,
-                                                  colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                                  shape = RoundedCornerShape(12.dp),
+                                                  colors = ButtonDefaults.buttonColors(
+                                                      containerColor = cyanAccent,
+                                                      contentColor = Color.Black
+                                                  ),
                                                   modifier = Modifier.weight(2f)
                                               ) {
-                                                  Text(if (working) "Working..." else "Analyze URL")
+                                                  Text(if (working) "Working..." else "Analyze", maxLines = 1)
                                               }
                                           }
                                       }
@@ -971,24 +1090,65 @@ jobs:
 
                               analysis?.let { info ->
                                   item {
-                                      Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                                      Card(
+                                          colors = CardDefaults.cardColors(containerColor = cardDark),
+                                          shape = RoundedCornerShape(14.dp),
+                                          modifier = Modifier.fillMaxWidth()
+                                      ) {
                                           Column(modifier = Modifier.padding(14.dp)) {
-                                              Text(info.title, color = Color.White, fontWeight = FontWeight.Bold)
-                                              Text("Engine: ${info.extractor} • Duration: ${info.duration}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                              Text(
+                                                  info.title,
+                                                  color = Color.White,
+                                                  fontWeight = FontWeight.Bold,
+                                                  maxLines = 2,
+                                                  overflow = TextOverflow.Ellipsis
+                                              )
+                                              Text(
+                                                  "${info.extractor} • ${info.duration}",
+                                                  color = Color(0xFF94A3B8),
+                                                  style = MaterialTheme.typography.bodySmall
+                                              )
                                           }
                                       }
                                   }
                                   items(info.formats) { fmt ->
                                       val picked = selectedFormat == fmt
                                       Card(
-                                          colors = CardDefaults.cardColors(containerColor = if (picked) Color(0xFF17253B) else cardDark),
+                                          colors = CardDefaults.cardColors(
+                                              containerColor = if (picked) Color(0xFF17253B) else cardDark
+                                          ),
                                           shape = RoundedCornerShape(12.dp),
-                                          modifier = Modifier.fillMaxWidth().border(1.dp, if (picked) cyanAccent else borderNeon, RoundedCornerShape(12.dp)).clickable { selectedFormat = fmt }
+                                          modifier = Modifier
+                                              .fillMaxWidth()
+                                              .border(
+                                                  1.dp,
+                                                  if (picked) cyanAccent else borderNeon,
+                                                  RoundedCornerShape(12.dp)
+                                              )
+                                              .clickable { selectedFormat = fmt }
                                       ) {
-                                          Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                          Row(
+                                              modifier = Modifier
+                                                  .padding(horizontal = 12.dp, vertical = 10.dp)
+                                                  .fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.SpaceBetween,
+                                              verticalAlignment = Alignment.CenterVertically
+                                          ) {
                                               Column(modifier = Modifier.weight(1f)) {
-                                                  Text(fmt.titleLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                                  Text(fmt.metaInfo, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                                  Text(
+                                                      fmt.titleLabel,
+                                                      color = Color.White,
+                                                      fontWeight = FontWeight.SemiBold,
+                                                      maxLines = 1,
+                                                      overflow = TextOverflow.Ellipsis
+                                                  )
+                                                  Text(
+                                                      fmt.metaInfo,
+                                                      color = Color(0xFF94A3B8),
+                                                      style = MaterialTheme.typography.bodySmall,
+                                                      maxLines = 1,
+                                                      overflow = TextOverflow.Ellipsis
+                                                  )
                                               }
                                               RadioButton(selected = picked, onClick = { selectedFormat = fmt })
                                           }
@@ -1002,14 +1162,20 @@ jobs:
                                               statusMsg = "Downloading ${fmt.titleLabel}..."
                                               scope.launch {
                                                   val res = withContext(Dispatchers.IO) {
-                                                      MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) { appendLog(it) }
+                                                      MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) {
+                                                          appendLog(it)
+                                                      }
                                                   }
                                                   working = false
                                                   statusMsg = res.getOrElse { "Failed: ${it.message}" }
                                               }
                                           },
                                           enabled = !working && selectedFormat != null,
-                                          colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                          shape = RoundedCornerShape(12.dp),
+                                          colors = ButtonDefaults.buttonColors(
+                                              containerColor = cyanAccent,
+                                              contentColor = Color.Black
+                                          ),
                                           modifier = Modifier.fillMaxWidth()
                                       ) {
                                           Text("Download Selected Format")
@@ -1020,35 +1186,77 @@ jobs:
 
                           1 -> {
                               item {
-                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                  Card(
+                                      colors = CardDefaults.cardColors(containerColor = cardDark),
+                                      shape = RoundedCornerShape(16.dp),
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                  ) {
+                                      Column(
+                                          modifier = Modifier.padding(14.dp),
+                                          verticalArrangement = Arrangement.spacedBy(8.dp)
+                                      ) {
                                           Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
                                           toolStatuses.forEach { st ->
-                                              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                              Row(
+                                                  modifier = Modifier.fillMaxWidth(),
+                                                  horizontalArrangement = Arrangement.SpaceBetween
+                                              ) {
                                                   Text(st.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                                  Text(if (st.installed) "Ready" else "Missing", color = if (st.installed) greenOk else amberWarn, style = MaterialTheme.typography.bodySmall)
+                                                  Text(
+                                                      if (st.installed) "Ready" else "Missing",
+                                                      color = if (st.installed) greenOk else amberWarn,
+                                                      style = MaterialTheme.typography.bodySmall
+                                                  )
                                               }
                                           }
                                       }
                                   }
                               }
                               item {
-                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                          OutlinedTextField(value = manifestUrl, onValueChange = { manifestUrl = it }, label = { Text("GitHub manifest.json URL") }, modifier = Modifier.fillMaxWidth())
+                                  Card(
+                                      colors = CardDefaults.cardColors(containerColor = cardDark),
+                                      shape = RoundedCornerShape(16.dp),
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                  ) {
+                                      Column(
+                                          modifier = Modifier.padding(14.dp),
+                                          verticalArrangement = Arrangement.spacedBy(10.dp)
+                                      ) {
+                                          OutlinedTextField(
+                                              value = manifestUrl,
+                                              onValueChange = { manifestUrl = it },
+                                              label = { Text("GitHub manifest.json URL") },
+                                              shape = RoundedCornerShape(12.dp),
+                                              modifier = Modifier.fillMaxWidth()
+                                          )
                                           Button(
                                               onClick = {
                                                   working = true
                                                   AssetsAndPackageManager.setManifestUrl(context, manifestUrl)
                                                   scope.launch {
-                                                      val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrl) }
+                                                      val res = withContext(Dispatchers.IO) {
+                                                          AssetsAndPackageManager.fetchManifest(context, manifestUrl)
+                                                      }
                                                       working = false
-                                                      res.onSuccess { list -> packages = list; refreshTools(); statusMsg = "Loaded ${list.size} packages" }
-                                                          .onFailure { statusMsg = "Error: ${it.message}" }
+                                                      res.onSuccess { list ->
+                                                          packages = list
+                                                          refreshTools()
+                                                          statusMsg = "Loaded ${list.size} packages"
+                                                      }.onFailure {
+                                                          statusMsg = "Error: ${it.message}"
+                                                      }
                                                   }
                                               },
                                               enabled = !working,
-                                              colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                              shape = RoundedCornerShape(12.dp),
+                                              colors = ButtonDefaults.buttonColors(
+                                                  containerColor = cyanAccent,
+                                                  contentColor = Color.Black
+                                              ),
                                               modifier = Modifier.fillMaxWidth()
                                           ) {
                                               Text("Fetch Manifest & Check Updates")
@@ -1063,26 +1271,56 @@ jobs:
                                       localVer != pkg.version -> "Update"
                                       else -> "Reinstall"
                                   }
-                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
-                                      Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                          Column(modifier = Modifier.weight(1f)) {
-                                              Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold)
-                                              Text("Latest: v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                  Card(
+                                      colors = CardDefaults.cardColors(containerColor = cardDark),
+                                      shape = RoundedCornerShape(14.dp),
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
+                                  ) {
+                                      Row(
+                                          modifier = Modifier
+                                              .padding(12.dp)
+                                              .fillMaxWidth(),
+                                          horizontalArrangement = Arrangement.SpaceBetween,
+                                          verticalAlignment = Alignment.CenterVertically
+                                      ) {
+                                          Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                              Text(
+                                                  pkg.name,
+                                                  color = Color.White,
+                                                  fontWeight = FontWeight.Bold,
+                                                  maxLines = 1,
+                                                  overflow = TextOverflow.Ellipsis
+                                              )
+                                              Text(
+                                                  "v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}",
+                                                  color = Color(0xFF94A3B8),
+                                                  style = MaterialTheme.typography.bodySmall
+                                              )
                                           }
                                           Button(
                                               onClick = {
                                                   working = true
                                                   scope.launch {
-                                                      val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.installPackage(context, pkg) { statusMsg = it } }
+                                                      val res = withContext(Dispatchers.IO) {
+                                                          AssetsAndPackageManager.installPackage(context, pkg) {
+                                                              statusMsg = it
+                                                          }
+                                                      }
                                                       working = false
                                                       refreshTools()
                                                       statusMsg = res.getOrElse { "Failed: ${it.message}" }
                                                   }
                                               },
                                               enabled = !working,
-                                              colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black)
+                                              shape = RoundedCornerShape(10.dp),
+                                              colors = ButtonDefaults.buttonColors(
+                                                  containerColor = cyanAccent,
+                                                  contentColor = Color.Black
+                                              )
                                           ) {
-                                              Text(action)
+                                              Text(action, maxLines = 1)
                                           }
                                       }
                                   }
@@ -1091,9 +1329,22 @@ jobs:
 
                           else -> {
                               item {
-                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                  Card(
+                                      colors = CardDefaults.cardColors(containerColor = cardDark),
+                                      shape = RoundedCornerShape(16.dp),
+                                      modifier = Modifier
+                                          .fillMaxWidth()
+                                          .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                  ) {
+                                      Column(
+                                          modifier = Modifier.padding(14.dp),
+                                          verticalArrangement = Arrangement.spacedBy(10.dp)
+                                      ) {
+                                          Row(
+                                              modifier = Modifier.fillMaxWidth(),
+                                              horizontalArrangement = Arrangement.SpaceBetween,
+                                              verticalAlignment = Alignment.CenterVertically
+                                          ) {
                                               Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
                                               Switch(
                                                   checked = bgActive,
@@ -1108,13 +1359,28 @@ jobs:
                                                   }
                                               )
                                           }
-                                          OutlinedTextField(value = gatewayUrl, onValueChange = { gatewayUrl = it }, label = { Text("Render Gateway URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                          OutlinedTextField(value = apiToken, onValueChange = { apiToken = it }, label = { Text("API Token (/tokenrender)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                          OutlinedTextField(
+                                              value = gatewayUrl,
+                                              onValueChange = { gatewayUrl = it },
+                                              label = { Text("Render Gateway URL") },
+                                              singleLine = true,
+                                              shape = RoundedCornerShape(12.dp),
+                                              modifier = Modifier.fillMaxWidth()
+                                          )
+                                          OutlinedTextField(
+                                              value = apiToken,
+                                              onValueChange = { apiToken = it },
+                                              label = { Text("API Token (/tokenrender)") },
+                                              singleLine = true,
+                                              shape = RoundedCornerShape(12.dp),
+                                              modifier = Modifier.fillMaxWidth()
+                                          )
                                           OutlinedButton(
                                               onClick = {
                                                   val base = gatewayUrl.trim().trimEnd('/')
                                                   context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
                                               },
+                                              shape = RoundedCornerShape(12.dp),
                                               modifier = Modifier.fillMaxWidth()
                                           ) {
                                               Text("Open /tokenrender", color = cyanAccent)
@@ -1126,11 +1392,32 @@ jobs:
                       }
 
                       item {
-                          Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
-                              Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                  Text("Engine Console", color = cyanAccent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                          Card(
+                              colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)),
+                              shape = RoundedCornerShape(14.dp),
+                              modifier = Modifier
+                                  .fillMaxWidth()
+                                  .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
+                          ) {
+                              Column(
+                                  modifier = Modifier.padding(12.dp),
+                                  verticalArrangement = Arrangement.spacedBy(4.dp)
+                              ) {
+                                  Text(
+                                      "Engine Console",
+                                      color = cyanAccent,
+                                      style = MaterialTheme.typography.labelLarge,
+                                      fontWeight = FontWeight.Bold
+                                  )
                                   logs.forEach { line ->
-                                      Text(line, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                      Text(
+                                          line,
+                                          color = Color(0xFFCBD5E1),
+                                          style = MaterialTheme.typography.bodySmall,
+                                          fontFamily = FontFamily.Monospace,
+                                          maxLines = 2,
+                                          overflow = TextOverflow.Ellipsis
+                                      )
                                   }
                               }
                           }
@@ -1139,16 +1426,6 @@ jobs:
               }
           }
           EOF
-
-      - name: Push scaffolded sources to GitHub repo
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Scaffold PyServer 2.0 Jetpack Compose project sources"
-            git push origin HEAD:main
-          fi
 
       - name: Fetch ARM64 tools into assets/tools
         run: |
@@ -1162,11 +1439,25 @@ jobs:
           fi
           chmod +x app/src/main/assets/tools/* 2>/dev/null || true
 
-      - name: Setup Gradle Wrapper & JDK 17
+      - name: Push scaffolded project sources to main branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Update PyServer 2.0 responsive Jetpack Compose project"
+            git pull --rebase origin main || true
+            git push origin HEAD:main
+          fi
+
+      - name: Setup JDK 17 & Gradle
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
+
+      - name: Setup Gradle CLI
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Ensure Gradle Wrapper exists
         run: |
@@ -1181,5 +1472,5 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PyServer2-Debug-APK
+          name: PyServer2-Responsive-APK
           path: app/build/outputs/apk/debug/app-debug.apk
