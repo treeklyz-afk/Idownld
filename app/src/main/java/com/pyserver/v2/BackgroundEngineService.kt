@@ -59,7 +59,11 @@ class BackgroundEngineService : Service() {
                     val url = obj.getString("url")
                     val fmtId = obj.optString("format_id", "best")
                     val type = obj.optString("media_type", "video")
-                    val res = MediaDownloaderEngine.downloadMedia(this, url, FormatChoice(fmtId, fmtId, type, "Token Job"))
+                    val res = MediaDownloaderEngine.downloadMedia(
+                        this,
+                        url,
+                        FormatChoice(fmtId, fmtId, type, "Token Job")
+                    )
                     sendCompletion(jobId, res.isSuccess, res.getOrElse { it.message ?: "Error" })
                 }
             }
@@ -91,7 +95,11 @@ class BackgroundEngineService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val mgr = getSystemService(NotificationManager::class.java)
-            val ch = NotificationChannel("pyserver2_channel", "PyServer 2.0 Service", NotificationManager.IMPORTANCE_LOW)
+            val ch = NotificationChannel(
+                "pyserver2_channel",
+                "PyServer 2.0 Service",
+                NotificationManager.IMPORTANCE_LOW
+            )
             mgr.createNotificationChannel(ch)
         }
     }

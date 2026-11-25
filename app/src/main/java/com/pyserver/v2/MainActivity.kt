@@ -11,10 +11,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.Extension
-import androidx.compose.material.icons.filled.Key
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -24,6 +20,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.Dispatchers
@@ -33,12 +30,12 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PyServerStudioApp() }
+        setContent { PyServerResponsiveApp() }
     }
 }
 
 @Composable
-fun PyServerStudioApp() {
+fun PyServerResponsiveApp() {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
@@ -60,16 +57,18 @@ fun PyServerStudioApp() {
     var bgActive by remember { mutableStateOf(false) }
 
     var working by remember { mutableStateOf(false) }
-    var statusMsg by remember { mutableStateOf("Initializing...") }
+    var statusMsg by remember { mutableStateOf("Booting mobile engine...") }
     var logs by remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(msg: String) {
-        logs = (logs + msg).takeLast(14)
+        logs = (logs + msg).takeLast(12)
     }
 
     fun refreshTools() {
         toolStatuses = AssetsAndPackageManager.getCoreToolsStatus(context)
-        versionMap = packages.associate { it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id) }
+        versionMap = packages.associate {
+            it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -77,7 +76,7 @@ fun PyServerStudioApp() {
             AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
         }
         refreshTools()
-        statusMsg = "Ready • PyServer 2.0 + Python Bridge"
+        statusMsg = "Ready • Mobile Responsive Engine"
     }
 
     val bgDark = Color(0xFF070A10)
@@ -89,42 +88,84 @@ fun PyServerStudioApp() {
 
     Scaffold(
         containerColor = bgDark,
+        modifier = Modifier
+            .fillMaxSize()
+            .statusBarsPadding()
+            .navigationBarsPadding(),
         bottomBar = {
             NavigationBar(containerColor = cardDark) {
                 NavigationBarItem(
                     selected = tab == 0,
                     onClick = { tab = 0 },
-                    icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
-                    label = { Text("Downloader") }
+                    icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tab == 0) cyanAccent else Color.Gray) },
+                    label = { Text("Downloader", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tab == 1,
                     onClick = { tab = 1; refreshTools() },
-                    icon = { Icon(Icons.Default.Extension, contentDescription = null) },
-                    label = { Text("Packages") }
+                    icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tab == 1) cyanAccent else Color.Gray) },
+                    label = { Text("Packages", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
-                    icon = { Icon(Icons.Default.Key, contentDescription = null) },
-                    label = { Text("Token & BG") }
+                    icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tab == 2) cyanAccent else Color.Gray) },
+                    label = { Text("Token & BG", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                 )
             }
         }
     ) { pad ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(pad).padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(pad)
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             item {
                 Card(
                     colors = CardDefaults.cardColors(containerColor = cardDark),
                     shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
                 ) {
-                    Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("PyServer 2.0", color = cyanAccent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        Text(statusMsg, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "PyServer 2.0",
+                                color = cyanAccent,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Surface(
+                                color = if (bgActive) greenOk.copy(alpha = 0.16f) else cyanAccent.copy(alpha = 0.14f),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    if (bgActive) "BG LIVE" else "READY",
+                                    color = if (bgActive) greenOk else cyanAccent,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            statusMsg,
+                            color = Color(0xFFCBD5E1),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                 }
             }
@@ -135,27 +176,48 @@ fun PyServerStudioApp() {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(16.dp),
-                            modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
                         ) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
                                 OutlinedTextField(
                                     value = mediaUrl,
                                     onValueChange = { mediaUrl = it },
                                     label = { Text("Paste Video / Media URL") },
                                     singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Python Bridge Analyze", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Python Bridge", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     Switch(checked = usePyBridge, onCheckedChange = { usePyBridge = it })
                                 }
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                    Text("Use aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     Switch(checked = useAria2, onCheckedChange = { useAria2 = it })
                                 }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedButton(onClick = { clipboard.getText()?.text?.let { mediaUrl = it } }, modifier = Modifier.weight(1f)) {
-                                        Text("Paste", color = Color.White)
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    OutlinedButton(
+                                        onClick = { clipboard.getText()?.text?.let { mediaUrl = it } },
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Text("Paste", color = Color.White, maxLines = 1)
                                     }
                                     Button(
                                         onClick = {
@@ -176,10 +238,14 @@ fun PyServerStudioApp() {
                                             }
                                         },
                                         enabled = !working,
-                                        colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = cyanAccent,
+                                            contentColor = Color.Black
+                                        ),
                                         modifier = Modifier.weight(2f)
                                     ) {
-                                        Text(if (working) "Working..." else "Analyze URL")
+                                        Text(if (working) "Working..." else "Analyze", maxLines = 1)
                                     }
                                 }
                             }
@@ -188,24 +254,65 @@ fun PyServerStudioApp() {
 
                     analysis?.let { info ->
                         item {
-                            Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                            Card(
+                                colors = CardDefaults.cardColors(containerColor = cardDark),
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                                 Column(modifier = Modifier.padding(14.dp)) {
-                                    Text(info.title, color = Color.White, fontWeight = FontWeight.Bold)
-                                    Text("Engine: ${info.extractor} • Duration: ${info.duration}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                    Text(
+                                        info.title,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "${info.extractor} • ${info.duration}",
+                                        color = Color(0xFF94A3B8),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                             }
                         }
                         items(info.formats) { fmt ->
                             val picked = selectedFormat == fmt
                             Card(
-                                colors = CardDefaults.cardColors(containerColor = if (picked) Color(0xFF17253B) else cardDark),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (picked) Color(0xFF17253B) else cardDark
+                                ),
                                 shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth().border(1.dp, if (picked) cyanAccent else borderNeon, RoundedCornerShape(12.dp)).clickable { selectedFormat = fmt }
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .border(
+                                        1.dp,
+                                        if (picked) cyanAccent else borderNeon,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable { selectedFormat = fmt }
                             ) {
-                                Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Row(
+                                    modifier = Modifier
+                                        .padding(horizontal = 12.dp, vertical = 10.dp)
+                                        .fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(fmt.titleLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
-                                        Text(fmt.metaInfo, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            fmt.titleLabel,
+                                            color = Color.White,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            fmt.metaInfo,
+                                            color = Color(0xFF94A3B8),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
                                     }
                                     RadioButton(selected = picked, onClick = { selectedFormat = fmt })
                                 }
@@ -219,14 +326,20 @@ fun PyServerStudioApp() {
                                     statusMsg = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) { appendLog(it) }
+                                            MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) {
+                                                appendLog(it)
+                                            }
                                         }
                                         working = false
                                         statusMsg = res.getOrElse { "Failed: ${it.message}" }
                                     }
                                 },
                                 enabled = !working && selectedFormat != null,
-                                colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = cyanAccent,
+                                    contentColor = Color.Black
+                                ),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Download Selected Format")
@@ -237,35 +350,77 @@ fun PyServerStudioApp() {
 
                 1 -> {
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = cardDark),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
                                 toolStatuses.forEach { st ->
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
                                         Text(st.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                        Text(if (st.installed) "Ready" else "Missing", color = if (st.installed) greenOk else amberWarn, style = MaterialTheme.typography.bodySmall)
+                                        Text(
+                                            if (st.installed) "Ready" else "Missing",
+                                            color = if (st.installed) greenOk else amberWarn,
+                                            style = MaterialTheme.typography.bodySmall
+                                        )
                                     }
                                 }
                             }
                         }
                     }
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                OutlinedTextField(value = manifestUrl, onValueChange = { manifestUrl = it }, label = { Text("GitHub manifest.json URL") }, modifier = Modifier.fillMaxWidth())
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = cardDark),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                OutlinedTextField(
+                                    value = manifestUrl,
+                                    onValueChange = { manifestUrl = it },
+                                    label = { Text("GitHub manifest.json URL") },
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                                 Button(
                                     onClick = {
                                         working = true
                                         AssetsAndPackageManager.setManifestUrl(context, manifestUrl)
                                         scope.launch {
-                                            val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrl) }
+                                            val res = withContext(Dispatchers.IO) {
+                                                AssetsAndPackageManager.fetchManifest(context, manifestUrl)
+                                            }
                                             working = false
-                                            res.onSuccess { list -> packages = list; refreshTools(); statusMsg = "Loaded ${list.size} packages" }
-                                                .onFailure { statusMsg = "Error: ${it.message}" }
+                                            res.onSuccess { list ->
+                                                packages = list
+                                                refreshTools()
+                                                statusMsg = "Loaded ${list.size} packages"
+                                            }.onFailure {
+                                                statusMsg = "Error: ${it.message}"
+                                            }
                                         }
                                     },
                                     enabled = !working,
-                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = cyanAccent,
+                                        contentColor = Color.Black
+                                    ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text("Fetch Manifest & Check Updates")
@@ -280,26 +435,56 @@ fun PyServerStudioApp() {
                             localVer != pkg.version -> "Update"
                             else -> "Reinstall"
                         }
-                        Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
-                            Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold)
-                                    Text("Latest: v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = cardDark),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .padding(12.dp)
+                                    .fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                                    Text(
+                                        pkg.name,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}",
+                                        color = Color(0xFF94A3B8),
+                                        style = MaterialTheme.typography.bodySmall
+                                    )
                                 }
                                 Button(
                                     onClick = {
                                         working = true
                                         scope.launch {
-                                            val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.installPackage(context, pkg) { statusMsg = it } }
+                                            val res = withContext(Dispatchers.IO) {
+                                                AssetsAndPackageManager.installPackage(context, pkg) {
+                                                    statusMsg = it
+                                                }
+                                            }
                                             working = false
                                             refreshTools()
                                             statusMsg = res.getOrElse { "Failed: ${it.message}" }
                                         }
                                     },
                                     enabled = !working,
-                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black)
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = cyanAccent,
+                                        contentColor = Color.Black
+                                    )
                                 ) {
-                                    Text(action)
+                                    Text(action, maxLines = 1)
                                 }
                             }
                         }
@@ -308,9 +493,22 @@ fun PyServerStudioApp() {
 
                 else -> {
                     item {
-                        Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
-                            Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = cardDark),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
                                     Switch(
                                         checked = bgActive,
@@ -325,13 +523,28 @@ fun PyServerStudioApp() {
                                         }
                                     )
                                 }
-                                OutlinedTextField(value = gatewayUrl, onValueChange = { gatewayUrl = it }, label = { Text("Render Gateway URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                                OutlinedTextField(value = apiToken, onValueChange = { apiToken = it }, label = { Text("API Token (/tokenrender)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(
+                                    value = gatewayUrl,
+                                    onValueChange = { gatewayUrl = it },
+                                    label = { Text("Render Gateway URL") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                OutlinedTextField(
+                                    value = apiToken,
+                                    onValueChange = { apiToken = it },
+                                    label = { Text("API Token (/tokenrender)") },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                                 OutlinedButton(
                                     onClick = {
                                         val base = gatewayUrl.trim().trimEnd('/')
                                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
                                     },
+                                    shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text("Open /tokenrender", color = cyanAccent)
@@ -343,11 +556,32 @@ fun PyServerStudioApp() {
             }
 
             item {
-                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
-                    Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Engine Console", color = cyanAccent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)),
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, borderNeon, RoundedCornerShape(14.dp))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            "Engine Console",
+                            color = cyanAccent,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                         logs.forEach { line ->
-                            Text(line, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                            Text(
+                                line,
+                                color = Color(0xFFCBD5E1),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

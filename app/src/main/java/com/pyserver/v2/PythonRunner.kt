@@ -43,7 +43,9 @@ object PythonRunner {
         val pyBin = findPythonExecutable(context)
             ?: return Result.failure(Exception("Python runtime not found"))
         val scriptFile = File(scriptsDir(context), "engine_bridge.py")
-        if (!scriptFile.exists()) return Result.failure(Exception("engine_bridge.py missing"))
+        if (!scriptFile.exists()) {
+            return Result.failure(Exception("engine_bridge.py missing"))
+        }
         val ytdlpBin = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
 
         return try {
@@ -53,7 +55,9 @@ object PythonRunner {
             val stdout = BufferedReader(InputStreamReader(proc.inputStream)).readText()
             val stderr = BufferedReader(InputStreamReader(proc.errorStream)).readText()
             val code = proc.waitFor()
-            if (stdout.isBlank()) return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+            if (stdout.isBlank()) {
+                return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+            }
 
             val root = JSONObject(stdout)
             if (!root.optBoolean("ok", false)) {

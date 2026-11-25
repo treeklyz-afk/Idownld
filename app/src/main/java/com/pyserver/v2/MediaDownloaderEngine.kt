@@ -28,7 +28,11 @@ object MediaDownloaderEngine {
     fun outputDirectory(context: Context): File =
         File(context.getExternalFilesDir(null), "PyServer2_Media").apply { mkdirs() }
 
-    fun analyzeUrl(context: Context, rawUrl: String, preferPythonBridge: Boolean = true): Result<MediaAnalysis> {
+    fun analyzeUrl(
+        context: Context,
+        rawUrl: String,
+        preferPythonBridge: Boolean = true
+    ): Result<MediaAnalysis> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(Exception("URL empty"))
 
@@ -125,9 +129,12 @@ object MediaDownloaderEngine {
                 onLog("Using aria2c")
             }
             when {
-                choice.mediaType == "audio" -> cmd.addAll(listOf("-f", "bestaudio/best", "-x", "--audio-format", "mp3"))
-                choice.formatId == "best" -> cmd.addAll(listOf("-f", "bv*+ba/b", "--merge-output-format", "mp4"))
-                else -> cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
+                choice.mediaType == "audio" ->
+                    cmd.addAll(listOf("-f", "bestaudio/best", "-x", "--audio-format", "mp3"))
+                choice.formatId == "best" ->
+                    cmd.addAll(listOf("-f", "bv*+ba/b", "--merge-output-format", "mp4"))
+                else ->
+                    cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
             }
             cmd.add(url)
             val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
@@ -145,9 +152,14 @@ object MediaDownloaderEngine {
         }
     }
 
-    private fun directHttpDownload(url: String, outDir: File, onLog: (String) -> Unit): Result<String> {
+    private fun directHttpDownload(
+        url: String,
+        outDir: File,
+        onLog: (String) -> Unit
+    ): Result<String> {
         return try {
-            val name = url.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}.mp4" }
+            val name = url.substringAfterLast("/").substringBefore("?")
+                .ifBlank { "media_${System.currentTimeMillis()}.mp4" }
             val dest = File(outDir, name)
             onLog("Direct download -> $name")
             val conn = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -156,7 +168,9 @@ object MediaDownloaderEngine {
                 connectTimeout = 20000
                 readTimeout = 60000
             }
-            if (conn.responseCode !in 200..299) return Result.failure(Exception("HTTP ${conn.responseCode}"))
+            if (conn.responseCode !in 200..299) {
+                return Result.failure(Exception("HTTP ${conn.responseCode}"))
+            }
             conn.inputStream.use { input ->
                 FileOutputStream(dest).use { output ->
                     val buf = ByteArray(16384)
