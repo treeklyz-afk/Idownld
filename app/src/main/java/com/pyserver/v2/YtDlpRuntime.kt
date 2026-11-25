@@ -26,9 +26,11 @@ object YtDlpRuntime {
         formatId: String,
         playlistIndices: List<Int>? = null,
         playlistMode: Boolean = false,
-        onProgress: ((DownloadProgress) -> Unit)? = null
+        onProgress: ((DownloadProgress) -> Unit)? = null,
+        taskId: String? = null
     ): List<File> {
-        val outputDir = File(context.cacheDir, "PyServer2/yt-dlp/${System.currentTimeMillis()}")
+        val outputDir = taskId?.let { DownloadQueue.taskDirectory(context, it) }
+            ?: File(context.cacheDir, "PyServer2/yt-dlp/${System.currentTimeMillis()}")
         if (!outputDir.mkdirs() && !outputDir.isDirectory) {
             throw IllegalStateException("Could not create private yt-dlp staging folder")
         }
@@ -54,7 +56,7 @@ object YtDlpRuntime {
             }
         }.apply { name = "yt-dlp-progress"; isDaemon = true; start() }
         val raw = try {
-            module(context).callAttr("download", url, formatId, outputDir.absolutePath, selection, playlistMode, progressFile.absolutePath).toString()
+            module(context).callAttr("download", url, formatId, outputDir.absolutePath, selection, playlistMode, progressFile.absolutePath, File(outputDir, ".paused").absolutePath).toString()
         } finally {
             watching.set(false)
             monitor?.join(1000)

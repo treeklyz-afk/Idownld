@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "catalogVersion": 7,
-  "updatedAtUtc": "2026-11-25T11:35:00Z",
+  "catalogVersion": 8,
+  "updatedAtUtc": "2026-11-25T12:08:00Z",
   "runtime": {
     "applicationId": "com.pyserver.v2",
     "targetSdk": 35,
@@ -226,11 +226,29 @@
       "description": "ExoPlayer and PlayerView for user-initiated preview playback and local video history.",
       "bundled": true,
       "license": "Apache-2.0"
+    },
+    {
+      "id": "work-runtime-ktx",
+      "name": "AndroidX WorkManager KTX",
+      "version": "2.10.1",
+      "category": "Background work",
+      "description": "Durable queued downloads, retry scheduling and foreground progress notifications. OS battery/network policies may defer tasks; uninstall removes active work.",
+      "bundled": true,
+      "license": "Apache-2.0"
+    },
+    {
+      "id": "compose-material-icons-extended",
+      "name": "Jetpack Compose Material Icons Extended",
+      "version": "Compose BOM 2024.11.00",
+      "category": "UI",
+      "description": "Icons used by the Compose Android interface.",
+      "bundled": true,
+      "license": "Apache-2.0"
     }
   ],
   "appVersion": {
-    "versionCode": 9,
-    "versionName": "2.7.0"
+    "versionCode": 10,
+    "versionName": "2.8.0"
   },
   "updateSource": {
     "provider": "GitHub Releases",

@@ -22,3 +22,6 @@ The EJS solver scripts are bundled, but a compatible JavaScript runtime is not. 
 
 ## Media3 ExoPlayer 1.5.1 and Coil Compose 2.7.0
 The app packages AndroidX Media3 ExoPlayer/Media3 UI and Coil Compose under Apache License 2.0. The full Apache-2.0 license text is included in `app/src/main/assets/third_party_licenses/Apache-2.0.txt` and in the APK. Upstream projects: https://github.com/androidx/media and https://github.com/coil-kt/coil . Media3 is used for user-initiated stream/history playback; Coil displays remote thumbnails when the user preference is enabled. These libraries do not remove source-site access restrictions.
+
+## AndroidX WorkManager KTX 2.10.1 and Compose Material Icons Extended
+These AndroidX libraries are distributed under Apache License 2.0; the full license text is included in `app/src/main/assets/third_party_licenses/Apache-2.0.txt`. WorkManager provides durable scheduling and foreground progress for user-initiated downloads; Material Icons Extended provides vector UI icons. Upstream: https://developer.android.com/jetpack/androidx/releases/work and https://developer.android.com/jetpack/compose.

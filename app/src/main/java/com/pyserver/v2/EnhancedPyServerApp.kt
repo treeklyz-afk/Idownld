@@ -1,16 +1,22 @@
 package com.pyserver.v2
 
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import android.os.Build
+import android.provider.Settings
 import android.util.Size
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -26,6 +32,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -41,6 +54,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.media3.common.MediaItem
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -65,13 +79,36 @@ fun EnhancedPyServerApp() {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("pyserver2_settings", Context.MODE_PRIVATE) }
     var entry by rememberSaveable { mutableStateOf("splash") }
+    fun finishPermissionSetup() {
+        preferences.edit().putBoolean("permission_setup_complete", true).apply()
+        entry = if (preferences.getBoolean("onboarding_complete", false)) "app" else "onboarding"
+    }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        finishPermissionSetup()
+    }
     LaunchedEffect(Unit) {
         delay(850)
-        entry = if (preferences.getBoolean("onboarding_complete", false)) "app" else "onboarding"
+        entry = when {
+            !preferences.getBoolean("permission_setup_complete", false) -> "permissions"
+            !preferences.getBoolean("onboarding_complete", false) -> "onboarding"
+            else -> "app"
+        }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Violet, background = Ink, surface = Panel, onPrimary = Ink, onSecondary = Color.White, onBackground = Color.White, onSurface = Color.White)) {
         when (entry) {
             "splash" -> SplashPage()
+            "permissions" -> PermissionSetupPage(
+                notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
+                onEnableNotifications = {
+                    if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    } else finishPermissionSetup()
+                },
+                onContinueWithoutNotifications = ::finishPermissionSetup,
+                onBackgroundSettings = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))) }
+                }
+            )
             "onboarding" -> OnboardingPage(onDone = {
                 preferences.edit().putBoolean("onboarding_complete", true).apply()
                 entry = "app"
@@ -92,6 +129,35 @@ private fun SplashPage() {
             Text("MEDIA • DOWNLOADS • TOOLS", style = MaterialTheme.typography.labelMedium, color = TextMuted)
             LinearProgressIndicator(Modifier.width(190.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
         }
+    }
+}
+
+@Composable
+private fun PermissionSetupPage(
+    notificationsEnabled: Boolean,
+    onEnableNotifications: () -> Unit,
+    onContinueWithoutNotifications: () -> Unit,
+    onBackgroundSettings: () -> Unit
+) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Spacer(Modifier.height(16.dp))
+        Text("SET UP DOWNLOADS", color = Cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        Text("A few Android settings", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("PyServer uses Android-managed media folders. No broad file access is needed for media created by this app.", color = TextMuted)
+        SettingsGroup("Storage", "Shared Download folder") {
+            Text("Files are saved under Download/PyServer/Video, Audio and Thumbnails. Android 10+ manages access to app-created MediaStore files without a storage permission prompt.", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+        }
+        SettingsGroup("Transfer notifications", "Progress and quick controls") {
+            Text(if (notificationsEnabled) "Notifications are enabled." else "Allow notifications to see background download progress and Pause/Resume controls in the notification shade.", color = if (notificationsEnabled) Good else Color.White, style = MaterialTheme.typography.bodySmall)
+        }
+        SettingsGroup("Background activity", "Optional device battery setting") {
+            Text("Queued downloads use Android WorkManager and a foreground notification. Battery saver or device policies may defer work. Android does not let an app promise that an in-progress task survives uninstall.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onBackgroundSettings, modifier = Modifier.fillMaxWidth()) { Text("Open app settings", color = Cyan) }
+        }
+        Button(onClick = onEnableNotifications, modifier = Modifier.fillMaxWidth().height(54.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
+            Text(if (notificationsEnabled || Build.VERSION.SDK_INT < 33) "Continue" else "Enable notifications & continue", fontWeight = FontWeight.Bold)
+        }
+        TextButton(onClick = onContinueWithoutNotifications, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Continue without notification permission", color = TextMuted) }
     }
 }
 
@@ -139,10 +205,9 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     var playingUrl by rememberSaveable { mutableStateOf("") }
     var playingTitle by rememberSaveable { mutableStateOf("") }
     var playerReturnFlow by rememberSaveable { mutableStateOf("formats") }
-    var isDownloading by rememberSaveable { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf<DownloadProgress?>(null) }
     var downloadMessage by rememberSaveable { mutableStateOf("") }
-    var downloadThumbnail by rememberSaveable { mutableStateOf("") }
+    var queueTasks by remember { mutableStateOf(emptyList<DownloadTaskSnapshot>()) }
+    var thumbnailMessage by rememberSaveable { mutableStateOf("") }
     var history by remember { mutableStateOf(emptyList<DownloadHistoryItem>()) }
     var wifiOnly by remember { mutableStateOf(preferences.getBoolean("wifi_only", false)) }
     var showThumbnails by remember { mutableStateOf(preferences.getBoolean("show_thumbnails", true)) }
@@ -159,13 +224,25 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     var busy by rememberSaveable { mutableStateOf(false) }
 
     fun refreshHistory() {
-        scope.launch { history = withContext(Dispatchers.IO) { MediaStoreDownloads.queryHistory(context) } }
+        scope.launch { history = withContext(Dispatchers.IO) { MediaStoreDownloads.queryHistory(context).filter { it.mediaType == "video" || it.mediaType == "audio" } } }
+    }
+    fun refreshQueue() {
+        scope.launch { queueTasks = runCatching { withContext(Dispatchers.IO) { DownloadQueue.query(context) } }.getOrDefault(emptyList()) }
     }
     LaunchedEffect(destination) { if (destination == "history" || destination == "downloads") refreshHistory() }
+    LaunchedEffect(destination) {
+        if (destination == "downloads") {
+            while (true) {
+                queueTasks = runCatching { withContext(Dispatchers.IO) { DownloadQueue.query(context) } }.getOrDefault(emptyList())
+                delay(1200)
+            }
+        } else if (destination == "players") refreshHistory()
+    }
     LaunchedEffect(flow, analysis) { if (flow == "formats" && analysis == null) flow = "home" }
-    DisposableEffect(isDownloading && keepScreenOn) {
+    val activeQueueTransfer = destination == "downloads" && queueTasks.any { it.state == androidx.work.WorkInfo.State.RUNNING && !it.isPaused }
+    DisposableEffect(activeQueueTransfer && keepScreenOn) {
         val window = (context as? android.app.Activity)?.window
-        if (isDownloading && keepScreenOn) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (activeQueueTransfer && keepScreenOn) window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose { window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
@@ -204,31 +281,16 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
         }
         val info = analysis ?: return
         selectedFormat = choice
-        downloadThumbnail = info.thumbnailUrl.orEmpty()
-        downloadProgress = DownloadProgress(status = "starting", fileName = info.title)
-        downloadMessage = "Preparing download…"
-        isDownloading = true
+        downloadMessage = "Added to the background download queue. Android may defer work under battery/network restrictions."
         destination = "downloads"
         flow = "home"
-        scope.launch {
-            val result = withContext(Dispatchers.IO) {
-                val progress: (DownloadProgress) -> Unit = { snapshot ->
-                    Handler(Looper.getMainLooper()).post { downloadProgress = snapshot }
-                }
-                if (info.entries.isEmpty()) {
-                    val source = if (choice.formatId == "direct") choice.sourceUrl ?: mediaUrl else mediaUrl
-                    MediaDownloaderEngine.downloadMedia(context, source, choice, onProgress = progress)
-                } else {
-                    val selected = if (fullCollection) null else playlistSelection.toList()
-                    if (!fullCollection && selected.isNullOrEmpty()) Result.failure(IllegalStateException("At least one collection item select karein."))
-                    else MediaDownloaderEngine.downloadPlaylist(context, mediaUrl, choice, selected, onProgress = progress)
-                }
-            }
-            isDownloading = false
-            downloadMessage = result.getOrElse { it.message ?: "Download failed" }
-            downloadProgress = downloadProgress?.copy(status = if (result.isSuccess) "complete" else "failed")
-            refreshHistory()
-        }
+        runCatching {
+            val source = if (choice.formatId == "direct") choice.sourceUrl ?: mediaUrl else mediaUrl
+            val selected = if (fullCollection) null else playlistSelection.toList()
+            if (info.entries.isNotEmpty() && !fullCollection && selected.isNullOrEmpty()) error("At least one collection item select karein.")
+            DownloadQueue.enqueue(context, info.title, source, choice, selected, isPlaylist = info.entries.isNotEmpty(), wifiOnly = wifiOnly, thumbnailUrl = info.thumbnailUrl.orEmpty())
+        }.onSuccess { refreshQueue() }
+            .onFailure { downloadMessage = it.message ?: "Queue mein add nahi ho saka" }
     }
 
     fun startGateway() {
@@ -280,11 +342,11 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
         bottomBar = {
             if (flow == "home") {
                 NavigationBar(containerColor = Panel, tonalElevation = 8.dp) {
-                    listOf("home" to "Home", "downloads" to "Downloads", "history" to "History", "settings" to "Settings").forEach { (key, label) ->
+                    listOf("home" to "Home", "downloads" to "Queue", "players" to "Players", "history" to "History", "settings" to "Settings").forEach { (key, label) ->
                         NavigationBarItem(
                             selected = destination == key,
                             onClick = { destination = key },
-                            icon = { Text(when (key) { "home" -> "⌂"; "downloads" -> "⇩"; "history" -> "◷"; else -> "⚙" }, color = if (destination == key) Cyan else TextMuted) },
+                            icon = { Icon(imageVector = when (key) { "home" -> Icons.Filled.Home; "downloads" -> Icons.Filled.Download; "players" -> Icons.Filled.PlayArrow; "history" -> Icons.Filled.History; else -> Icons.Filled.Settings }, contentDescription = label, tint = if (destination == key) Cyan else TextMuted) },
                             label = { Text(label, maxLines = 1, softWrap = false) }
                         )
                     }
@@ -310,6 +372,17 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     onPlay = { source, title -> playerReturnFlow = "formats"; playingUrl = source; playingTitle = title; flow = "player" },
                     onBack = { flow = "home" },
                     onDownload = { full -> selectedFormat?.let { beginDownload(it, full) } },
+                    onSaveThumbnail = {
+                        val thumb = analysis?.thumbnailUrl
+                        if (thumb.isNullOrBlank()) thumbnailMessage = "Is media ke liye thumbnail URL available nahi hai."
+                        else scope.launch {
+                            thumbnailMessage = "Saving thumbnail…"
+                            val saved = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadThumbnail(context, thumb, analysis?.title ?: "thumbnail") }
+                            thumbnailMessage = saved.getOrElse { it.message ?: "Thumbnail save failed" }
+                            refreshHistory()
+                        }
+                    },
+                    thumbnailMessage = thumbnailMessage,
                     selectedPlaylistIndices = playlistSelection,
                     onPlaylistSelection = { playlistSelection = it },
                     audioPage = audioPage,
@@ -330,15 +403,22 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     onSettings = { destination = "settings" }
                 )
                 destination == "downloads" -> DownloadsPage(
-                    active = isDownloading,
-                    progress = downloadProgress,
+                    tasks = queueTasks,
                     message = downloadMessage,
-                    thumbnailUrl = downloadThumbnail,
                     showThumbnails = showThumbnails,
                     recent = history.take(4),
                     onOpenMedia = { item -> playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" },
                     onHistory = { destination = "history" },
-                    onRefresh = ::refreshHistory
+                    onRefresh = { refreshHistory(); refreshQueue() },
+                    onPause = { id -> scope.launch(Dispatchers.IO) { DownloadQueue.pause(context, id); refreshQueue() } },
+                    onResume = { id -> scope.launch(Dispatchers.IO) { DownloadQueue.resume(context, id); refreshQueue() } },
+                    onCancel = { id -> scope.launch(Dispatchers.IO) { DownloadQueue.cancel(context, id); refreshQueue() } }
+                )
+                destination == "players" -> PlayersPage(
+                    items = history.filter { it.mediaType == "video" || it.mediaType == "audio" },
+                    showThumbnails = showThumbnails,
+                    onRefresh = ::refreshHistory,
+                    onOpenMedia = { item -> playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
                 )
                 destination == "history" -> HistoryPage(
                     items = history,
@@ -476,13 +556,15 @@ private fun FormatsPage(
     onPlay: (String, String) -> Unit,
     onBack: () -> Unit,
     onDownload: (Boolean) -> Unit,
+    onSaveThumbnail: () -> Unit,
+    thumbnailMessage: String,
     selectedPlaylistIndices: Set<Int>,
     onPlaylistSelection: (Set<Int>) -> Unit,
     audioPage: Int,
     onAudioPage: (Int) -> Unit
 ) {
     val pagerScope = rememberCoroutineScope()
-    val videoFormats = info.formats.filter { it.mediaType == "video" && (it.height == 0 || it.height <= maxHeight) }
+    val videoFormats = info.formats.filter { it.mediaType == "video" && (maxHeight <= 0 || it.height == 0 || it.height <= maxHeight) }
     val audioFormats = info.formats.filter { it.mediaType == "audio" }
     val pager = rememberPagerState(initialPage = audioPage.coerceIn(0, 1), pageCount = { 2 })
     LaunchedEffect(pager.currentPage) {
@@ -516,6 +598,10 @@ private fun FormatsPage(
             } else {
                 Text("Preview stream unavailable", color = Color.White, modifier = Modifier.align(Alignment.BottomCenter).padding(10.dp), style = MaterialTheme.typography.labelSmall)
             }
+        }
+        if (!info.thumbnailUrl.isNullOrBlank()) {
+            OutlinedButton(onClick = onSaveThumbnail, modifier = Modifier.fillMaxWidth()) { Text("Save thumbnail to Download/PyServer/Thumbnails", color = Cyan) }
+            if (thumbnailMessage.isNotBlank()) Text(thumbnailMessage, color = TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (info.entries.isNotEmpty()) {
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(16.dp), modifier = Modifier.padding(top = 8.dp)) {
@@ -556,9 +642,11 @@ private fun FormatsPage(
                         val active = selected?.let { it.formatId == format.formatId && it.mediaType == format.mediaType } == true
                         Card(modifier = Modifier.fillMaxWidth().clickable { onSelect(format) }.border(1.dp, if (active) Cyan else Color.Transparent, RoundedCornerShape(16.dp)), colors = CardDefaults.cardColors(containerColor = if (active) PanelRaised else Panel), shape = RoundedCornerShape(16.dp)) {
                             Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(imageVector = if (format.mediaType == "audio") Icons.Filled.MusicNote else Icons.Filled.PlayArrow, contentDescription = if (format.mediaType == "audio") "Audio format" else "Video format", tint = if (format.mediaType == "audio") Violet else Cyan, modifier = Modifier.padding(end = 12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(format.titleLabel, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Text(format.metaInfo, color = TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(format.estimatedSizeBytes?.let(::formatByteCount) ?: "Estimated size unavailable", color = Cyan, style = MaterialTheme.typography.labelSmall)
                                 }
                                 RadioButton(selected = active, onClick = { onSelect(format) })
                             }
@@ -609,45 +697,46 @@ private fun MediaPlayerPage(url: String, title: String, onBack: () -> Unit) {
 
 @Composable
 private fun DownloadsPage(
-    active: Boolean,
-    progress: DownloadProgress?,
+    tasks: List<DownloadTaskSnapshot>,
     message: String,
-    thumbnailUrl: String,
     showThumbnails: Boolean,
     recent: List<DownloadHistoryItem>,
     onOpenMedia: (DownloadHistoryItem) -> Unit,
     onHistory: () -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onPause: (java.util.UUID) -> Unit,
+    onResume: (java.util.UUID) -> Unit,
+    onCancel: (java.util.UUID) -> Unit
 ) {
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text("Downloads", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Live transfer status and recent files", color = TextMuted) }
+            Column { Text("Download queue", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Background tasks • pause, resume or cancel", color = TextMuted) }
             TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
         }
-        if (active || progress != null) {
-            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(22.dp)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        if (showThumbnails && thumbnailUrl.isNotBlank()) AsyncImage(model = thumbnailUrl, contentDescription = "Downloading video thumbnail", modifier = Modifier.size(92.dp, 62.dp).clip(RoundedCornerShape(12.dp)))
-                        Column(Modifier.weight(1f)) {
-                            Text(if (active) "Downloading" else "Last transfer", color = Cyan, fontWeight = FontWeight.Bold)
-                            Text(progress?.fileName ?: "Media", color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                    val fraction = progress?.fraction
-                    if (fraction != null) LinearProgressIndicator(progress = { fraction ?: 0f }, modifier = Modifier.fillMaxWidth().height(8.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
-                    else if (active) LinearProgressIndicator(Modifier.fillMaxWidth().height(8.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
+        if (tasks.isEmpty()) EmptyStateCard("Queue is empty", "Downloads run through Android WorkManager with foreground progress. They can continue after the app process exits, but not after uninstall.")
+        else tasks.forEach { task ->
+            val done = task.state.isFinished
+            val percent = if (task.totalBytes > 0L) (task.downloadedBytes * 100L / task.totalBytes).coerceIn(0L, 100L).toInt() else 0
+            Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
+                Column(Modifier.fillMaxWidth().padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                    if (showThumbnails && task.thumbnailUrl.isNotBlank()) AsyncImage(model = task.thumbnailUrl, contentDescription = "Queued download thumbnail", modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(14.dp)))
+                    Text(task.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(if (task.isPaused) "Paused" else task.state.name.lowercase().replaceFirstChar { it.uppercase() }, color = if (task.state == androidx.work.WorkInfo.State.FAILED) Color(0xFFFF9B9B) else Cyan, style = MaterialTheme.typography.labelMedium)
+                    if (task.failureMessage.isNotBlank()) Text(task.failureMessage, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (task.totalBytes > 0L) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
+                    else if (!done) LinearProgressIndicator(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text(if (fraction != null) "${(fraction * 100).toInt()}%" else progress?.status?.replaceFirstChar { it.uppercase() } ?: "Starting…", color = Color.White, fontWeight = FontWeight.SemiBold)
-                        Text("${formatByteCount(progress?.downloadedBytes ?: 0L)} / ${formatByteCount(progress?.totalBytes ?: 0L)}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                        Text(if (task.totalBytes > 0L) "$percent%" else "${formatByteCount(task.downloadedBytes)} transferred", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                        if (task.totalBytes > 0L) Text("${formatByteCount(task.downloadedBytes)} / ${formatByteCount(task.totalBytes)}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
                     }
-                    if (message.isNotBlank()) Text(message, color = if (message.contains("failed", true)) Color(0xFFFF9B9B) else TextMuted, style = MaterialTheme.typography.bodySmall)
+                    if (!done) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { if (task.isPaused) onResume(task.id) else onPause(task.id) }, modifier = Modifier.weight(1f)) { Text(if (task.isPaused) "Resume" else "Pause", color = Cyan) }
+                        OutlinedButton(onClick = { onCancel(task.id) }, modifier = Modifier.weight(1f)) { Text("Cancel", color = Color(0xFFFF9B9B)) }
+                    }
                 }
             }
-        } else {
-            EmptyStateCard("No active transfer", "Start a download from Home. Byte counts and percentage appear here while the transfer runs.")
-            if (message.isNotBlank()) Text(message, color = TextMuted)
         }
+        if (message.isNotBlank()) Text(message, color = TextMuted, style = MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Recent files", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             TextButton(onClick = onHistory) { Text("See all", color = Cyan) }
@@ -657,10 +746,25 @@ private fun DownloadsPage(
 }
 
 @Composable
+private fun PlayersPage(items: List<DownloadHistoryItem>, showThumbnails: Boolean, onRefresh: () -> Unit, onOpenMedia: (DownloadHistoryItem) -> Unit) {
+    Column(Modifier.fillMaxSize().widthIn(max = 680.dp).padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column { Text("Players", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Your saved videos and audio", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
+            TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
+        }
+        Spacer(Modifier.height(12.dp))
+        if (items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyStateCard("No playable media yet", "Downloaded videos and audio saved in Download/PyServer appear here. Tap a file to open it in ExoPlayer.") }
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
+            items(items, key = { it.uri.toString() }) { item -> HistoryItemCard(item, showThumbnails) { onOpenMedia(item) } }
+        }
+    }
+}
+
+@Composable
 private fun HistoryPage(items: List<DownloadHistoryItem>, showThumbnails: Boolean, onRefresh: () -> Unit, onOpenMedia: (DownloadHistoryItem) -> Unit) {
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text("Download history", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Saved in Movies/PyServer2 or Music/PyServer2", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
+            Column { Text("Download history", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Saved in Download/PyServer/Video, Audio or Thumbnails", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
             TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
         }
         Spacer(Modifier.height(12.dp))
@@ -728,7 +832,7 @@ private fun SettingsPage(
 ) {
     val context = LocalContext.current
     var showResolutionMenu by remember { mutableStateOf(false) }
-    val choices = listOf(480, 720, 1080, 1440, 2160)
+    val choices = listOf(0, 480, 720, 1080, 1440, 2160)
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Settings", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(22.dp)) {
@@ -744,16 +848,16 @@ private fun SettingsPage(
         SettingsGroup("Video & audio", "Format and preview") {
             SettingSwitch("Show thumbnails", "Analysis aur download cards mein preview image", showThumbnails, onShowThumbnails)
             Box {
-                OutlinedButton(onClick = { showResolutionMenu = true }, modifier = Modifier.fillMaxWidth()) { Text("Maximum resolution  •  ${maxHeight}p", color = Color.White) }
+                OutlinedButton(onClick = { showResolutionMenu = true }, modifier = Modifier.fillMaxWidth()) { Text("Maximum resolution  •  ${if (maxHeight <= 0) "Any resolution" else "${maxHeight}p"}", color = Color.White) }
                 DropdownMenu(expanded = showResolutionMenu, onDismissRequest = { showResolutionMenu = false }) {
-                    choices.forEach { value -> DropdownMenuItem(text = { Text("Up to ${value}p") }, onClick = { onMaxHeight(value); showResolutionMenu = false }) }
+                    choices.forEach { value -> DropdownMenuItem(text = { Text(if (value <= 0) "Any resolution" else "Up to ${value}p") }, onClick = { onMaxHeight(value); showResolutionMenu = false }) }
                 }
             }
             Text("Separate-stream merging and format conversion are unavailable in this build. The picker filters to the selected height cap.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsGroup("Storage & downloads", "Progress and history") {
             SettingSwitch("Keep screen awake while downloading", "Avoids screen sleep during an active transfer", keepScreenOn, onKeepScreenOn)
-            Text("Saved videos: Movies/PyServer2/Video • audio: Music/PyServer2/Audio", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+            Text("Shared files: Download/PyServer/Video • Audio • Thumbnails", color = TextMuted, style = MaterialTheme.typography.bodySmall)
         }
         SettingsGroup("GitHub updates", "Release-based update check") {
             Text(updateMessage, color = if (release != null) Good else TextMuted, style = MaterialTheme.typography.bodySmall)

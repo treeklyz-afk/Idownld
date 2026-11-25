@@ -32,19 +32,21 @@ object MediaStoreDownloads {
                 MediaStore.MediaColumns._ID,
                 MediaStore.MediaColumns.DISPLAY_NAME,
                 MediaStore.MediaColumns.SIZE,
-                MediaStore.MediaColumns.DATE_ADDED
+                MediaStore.MediaColumns.DATE_ADDED,
+                MediaStore.MediaColumns.MIME_TYPE
             )
             resolver.query(
                 collection,
                 projection,
                 "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
-                arrayOf("$folder/%"),
+                arrayOf("$folder%"),
                 "${MediaStore.MediaColumns.DATE_ADDED} DESC"
             )?.use { cursor ->
                 val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
                 val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
                 val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
                 val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                val mimeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.MIME_TYPE)
                 while (cursor.moveToNext()) {
                     val id = cursor.getLong(idCol)
                     result += DownloadHistoryItem(
@@ -52,13 +54,17 @@ object MediaStoreDownloads {
                         displayName = cursor.getString(nameCol) ?: "Media download",
                         sizeBytes = cursor.getLong(sizeCol),
                         dateAddedSeconds = cursor.getLong(dateCol),
-                        mediaType = type
+                        mediaType = when {
+                            type == "thumbnail" -> "thumbnail"
+                            cursor.getString(mimeCol).orEmpty().startsWith("audio/") -> "audio"
+                            cursor.getString(mimeCol).orEmpty().startsWith("image/") -> "thumbnail"
+                            else -> "video"
+                        }
                     )
                 }
             }
         }
-        query(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "${Environment.DIRECTORY_MOVIES}/PyServer2/Video", "video")
-        query(MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "${Environment.DIRECTORY_MUSIC}/PyServer2/Audio", "audio")
+        query(MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "${Environment.DIRECTORY_DOWNLOADS}/PyServer/", "download")
         return result.sortedByDescending { it.dateAddedSeconds }
     }
 
@@ -69,9 +75,9 @@ object MediaStoreDownloads {
         }
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
             val base = when (mediaType.lowercase()) {
-                "audio" -> File(context.getExternalFilesDir(Environment.DIRECTORY_MUSIC), "PyServer2/Audio")
-                "gif", "image" -> File(context.getExternalFilesDir(Environment.DIRECTORY_PICTURES), "PyServer2/GIF")
-                else -> File(context.getExternalFilesDir(Environment.DIRECTORY_MOVIES), "PyServer2/Video")
+                "audio" -> File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "PyServer/Audio")
+                "thumbnail", "gif", "image" -> File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "PyServer/Thumbnails")
+                else -> File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "PyServer/Video")
             }
             if (!base.exists() && !base.mkdirs()) {
                 return Result.failure(IllegalStateException("Could not create app media folder"))
@@ -90,14 +96,12 @@ object MediaStoreDownloads {
                 "gif", "image" -> "image/gif"
                 else -> "video/*"
             }
-        val (collection, relativePath) = when (mediaType.lowercase()) {
-            "audio" -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to
-                "${Environment.DIRECTORY_MUSIC}/PyServer2/Audio"
-            "gif", "image" -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to
-                "${Environment.DIRECTORY_PICTURES}/PyServer2/GIF"
-            else -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY) to
-                "${Environment.DIRECTORY_MOVIES}/PyServer2/Video"
+        val relativePath = when (mediaType.lowercase()) {
+            "audio" -> "${Environment.DIRECTORY_DOWNLOADS}/PyServer/Audio"
+            "thumbnail", "gif", "image" -> "${Environment.DIRECTORY_DOWNLOADS}/PyServer/Thumbnails"
+            else -> "${Environment.DIRECTORY_DOWNLOADS}/PyServer/Video"
         }
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val resolver = context.contentResolver
         var inserted: Uri? = null
         return try {

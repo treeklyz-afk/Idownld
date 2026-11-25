@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import time
 from yt_dlp import YoutubeDL
 
 PREVIEW_LIMIT = 100
@@ -67,9 +68,8 @@ def analyze(url):
     return json.dumps(_simple_info(info), ensure_ascii=False, separators=(",", ":"))
 
 
-def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False, progress_file_path=""):
+def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False, progress_file_path="", pause_marker_path=""):
     os.makedirs(output_dir, exist_ok=True)
-    before = set(os.listdir(output_dir))
     if format_id == "bestaudio":
         selected_format = "bestaudio"
     elif format_id == "best":
@@ -94,13 +94,19 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
             "total": int(data.get("total_bytes") or data.get("total_bytes_estimate") or 0),
             "filename": str(info.get("filename") or info.get("title") or "Media")[:240],
         }
-        temporary = progress_file_path + ".tmp"
-        try:
-            with open(temporary, "w", encoding="utf-8") as stream:
-                json.dump(snapshot, stream, separators=(",", ":"))
-            os.replace(temporary, progress_file_path)
-        except OSError:
-            pass
+        def publish_progress():
+            temporary = progress_file_path + ".tmp"
+            try:
+                with open(temporary, "w", encoding="utf-8") as stream:
+                    json.dump(snapshot, stream, separators=(",", ":"))
+                os.replace(temporary, progress_file_path)
+            except OSError:
+                pass
+        while pause_marker_path and os.path.exists(pause_marker_path):
+            snapshot["status"] = "paused"
+            publish_progress()
+            time.sleep(0.4)
+        publish_progress()
 
     options = {
         "quiet": True,
@@ -111,6 +117,7 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
         "noplaylist": not playlist_mode,
         "continuedl": True,
         "socket_timeout": 30,
+        "concurrent_fragment_downloads": 4,
         "progress_hooks": [progress_hook],
     }
     if playlist_indices_csv:
@@ -124,9 +131,9 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
     if code not in (None, 0):
         raise RuntimeError("yt-dlp download failed with code %s" % code)
     new_files = []
-    for name in sorted(set(os.listdir(output_dir)) - before):
+    for name in sorted(os.listdir(output_dir)):
         path = os.path.realpath(os.path.join(output_dir, name))
-        if os.path.isfile(path) and os.path.commonpath([os.path.realpath(output_dir), path]) == os.path.realpath(output_dir) and not name.endswith(".part"):
+        if not name.startswith(".") and not name.endswith((".part", ".ytdl", ".tmp")) and os.path.isfile(path) and os.path.commonpath([os.path.realpath(output_dir), path]) == os.path.realpath(output_dir):
             new_files.append(path)
     if not new_files:
         raise RuntimeError("yt-dlp finished without producing a media file")

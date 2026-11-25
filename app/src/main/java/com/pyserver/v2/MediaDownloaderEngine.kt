@@ -15,7 +15,8 @@ data class FormatChoice(
     val mediaType: String,
     val metaInfo: String,
     val sourceUrl: String? = null,
-    val height: Int = 0
+    val height: Int = 0,
+    val estimatedSizeBytes: Long? = null
 )
 
 data class MediaEntry(
@@ -134,18 +135,21 @@ object MediaDownloaderEngine {
                     val choice = FormatChoice(
                         id, label, if (vcodec == "none") "audio" else "video",
                         if (vcodec == "none") "Audio format $id" else "Muxed video and audio • $id",
-                        sourceUrl, height
+                        sourceUrl, height, size.takeIf { it > 0L }
                     )
                     if (vcodec == "none") formats += choice else videoCandidates += choice
                 }
             }
         }
-        val cap = maxHeight.coerceIn(480, 2160)
-        val bestPreview = videoCandidates.filter { it.height == 0 || it.height <= cap }.maxByOrNull { it.height }
+        val cap = if (maxHeight <= 0) 0 else maxHeight.coerceIn(480, 2160)
+        val bestPreview = videoCandidates.filter { cap == 0 || it.height == 0 || it.height <= cap }.maxByOrNull { it.height }
             ?: videoCandidates.maxByOrNull { it.height }
+        val bestId = if (cap == 0) "best" else "best$cap"
+        val bestLabel = if (cap == 0) "Best single-file video • any resolution" else "Best single-file video • up to ${cap}p"
         formats += FormatChoice(
-            "best$cap", "Best single-file video • up to ${cap}p", "video",
-            "Muxed video/audio; no FFmpeg CLI merge required", bestPreview?.sourceUrl, bestPreview?.height ?: 0
+            bestId, bestLabel, "video",
+            "Muxed video/audio; no FFmpeg CLI merge required", bestPreview?.sourceUrl, bestPreview?.height ?: 0,
+            bestPreview?.estimatedSizeBytes
         )
         formats += videoCandidates.sortedByDescending { it.height }
         if (formats.none { it.mediaType == "audio" }) {
@@ -198,6 +202,7 @@ object MediaDownloaderEngine {
             val code = conn.responseCode
             val contentType = (conn.contentType ?: "").substringBefore(';').trim().lowercase()
             val finalUrl = conn.url.toString()
+            val contentLength = conn.contentLengthLong
             val disposition = conn.getHeaderField("Content-Disposition") ?: ""
             conn.disconnect()
             if (code !in 200..299) return Result.failure(IllegalStateException("Media server returned HTTP $code"))
@@ -223,7 +228,7 @@ object MediaDownloaderEngine {
                     title = title,
                     extractor = "Direct file",
                     duration = "Original stream",
-                    formats = listOf(FormatChoice("direct", label, mediaType, "No re-encoding", finalUrl))
+                    formats = listOf(FormatChoice("direct", label, mediaType, "No re-encoding", finalUrl, estimatedSizeBytes = contentLength.takeIf { it > 0L }))
                 )
             )
         } catch (e: Exception) {
@@ -237,14 +242,15 @@ object MediaDownloaderEngine {
         choice: FormatChoice,
         useAria2: Boolean = false,
         onLog: (String) -> Unit = {},
-        onProgress: (DownloadProgress) -> Unit = {}
+        onProgress: (DownloadProgress) -> Unit = {},
+        taskId: String? = null
     ): Result<String> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL empty"))
-        if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog, onProgress)
+        if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog, onProgress, taskId)
         return try {
             onLog("Downloading with APK-bundled yt-dlp...")
-            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId, onProgress = onProgress), choice.mediaType)
+            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId, onProgress = onProgress, taskId = taskId), choice.mediaType)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("yt-dlp download failed: ${e.message ?: "unknown error"}"))
         }
@@ -258,7 +264,8 @@ object MediaDownloaderEngine {
         selectedIndices: List<Int>? = null,
         useAria2: Boolean = false,
         onLog: (String) -> Unit = {},
-        onProgress: (DownloadProgress) -> Unit = {}
+        onProgress: (DownloadProgress) -> Unit = {},
+        taskId: String? = null
     ): Result<String> {
         if (selectedIndices != null && selectedIndices.isEmpty()) {
             return Result.failure(IllegalArgumentException("Select at least one playlist item"))
@@ -270,11 +277,53 @@ object MediaDownloaderEngine {
             onLog("Downloading collection with APK-bundled yt-dlp...")
             publishYtDlpFiles(
                 context,
-                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true, onProgress = onProgress),
+                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true, onProgress = onProgress, taskId = taskId),
                 choice.mediaType
             )
         } catch (e: Exception) {
             Result.failure(IllegalStateException("yt-dlp playlist download failed: ${e.message ?: "unknown error"}"))
+        }
+    }
+
+    fun downloadThumbnail(context: Context, rawUrl: String, title: String): Result<String> = runCatching {
+        val parsed = URL(rawUrl.trim())
+        require(parsed.protocol in setOf("http", "https") && parsed.host.isNotBlank()) { "Thumbnail URL must use HTTP or HTTPS" }
+        val connection = (parsed.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
+            connectTimeout = 15000
+            readTimeout = 30000
+        }
+        try {
+            val code = connection.responseCode
+            val mime = (connection.contentType ?: "").substringBefore(';').trim().lowercase()
+            require(code in 200..299 && mime.startsWith("image/")) { "Thumbnail server returned HTTP $code (${mime.ifBlank { "unknown type" }})" }
+            val ext = when (mime) {
+                "image/jpeg", "image/jpg" -> "jpg"
+                "image/png" -> "png"
+                "image/webp" -> "webp"
+                "image/gif" -> "gif"
+                else -> throw IllegalStateException("Unsupported thumbnail type: $mime")
+            }
+            val base = title.replace(Regex("[^A-Za-z0-9_-]"), "_").take(72).ifBlank { "thumbnail" }
+            val file = File(MediaStoreDownloads.stagingDirectory(context), "${base}_${System.currentTimeMillis()}.$ext")
+            var total = 0L
+            connection.inputStream.use { input ->
+                FileOutputStream(file).use { output ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= 20L * 1024L * 1024L) { "Thumbnail exceeds the 20 MiB safety limit" }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            MediaStoreDownloads.publish(context, file, "thumbnail").getOrThrow()
+        } finally {
+            connection.disconnect()
         }
     }
 
@@ -298,30 +347,32 @@ object MediaDownloaderEngine {
         url: String,
         choice: FormatChoice,
         onLog: (String) -> Unit,
-        onProgress: (DownloadProgress) -> Unit
+        onProgress: (DownloadProgress) -> Unit,
+        taskId: String?
     ): Result<String> {
         if (choice.formatId != "direct") return Result.failure(IllegalArgumentException("Only verified direct media URLs use the built-in downloader"))
+        var conn: HttpURLConnection? = null
         return try {
             val parsed = URL(url)
             if (parsed.protocol !in setOf("http", "https")) return Result.failure(IllegalArgumentException("Only HTTP and HTTPS downloads are supported"))
             onLog("Fetching verified direct media file...")
-            val conn = (parsed.openConnection() as HttpURLConnection).apply {
+            val stageDir = if (taskId != null) DownloadQueue.taskDirectory(context, taskId).apply { mkdirs() } else MediaStoreDownloads.stagingDirectory(context)
+            val temp = File(stageDir, if (taskId != null) "$taskId.media.part" else "direct-${System.currentTimeMillis()}.part")
+            val existing = if (taskId != null && temp.isFile) temp.length() else 0L
+            val connection = (parsed.openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
                 instanceFollowRedirects = true
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14)")
                 connectTimeout = 20000
-                readTimeout = 60000
+                readTimeout = 120000
+                if (existing > 0L) setRequestProperty("Range", "bytes=$existing-")
             }
-            val code = conn.responseCode
-            val contentType = (conn.contentType ?: "").substringBefore(';').trim().lowercase()
-            val finalUrl = conn.url.toString()
-            val contentLength = conn.contentLengthLong
-            if (code !in 200..299) {
-                conn.disconnect()
-                return Result.failure(IllegalStateException("Source returned HTTP $code"))
-            }
+            conn = connection
+            val code = connection.responseCode
+            val contentType = (connection.contentType ?: "").substringBefore(';').trim().lowercase()
+            val finalUrl = connection.url.toString()
+            if (code !in 200..299) return Result.failure(IllegalStateException("Source returned HTTP $code"))
             if (contentType == "text/html" || contentType.contains("mpegurl") || finalUrl.substringBefore('?').endsWith(".m3u8", true)) {
-                conn.disconnect()
                 return Result.failure(IllegalStateException("Server returned a webpage or playlist, not a direct media file"))
             }
             val path = finalUrl.substringBefore('?').substringAfterLast('/').ifBlank { "download" }
@@ -339,22 +390,30 @@ object MediaDownloaderEngine {
                 contentType.startsWith("video/") && suffix in setOf("mp4", "m4v", "mov", "webm", "mkv") -> suffix
                 contentType.startsWith("audio/") && suffix in setOf("mp3", "m4a", "aac", "ogg", "opus", "wav", "flac") -> suffix
                 contentType == "application/octet-stream" && suffix in setOf("mp4", "m4v", "mov", "webm", "mkv", "mp3", "m4a", "aac", "ogg", "opus", "wav", "flac", "gif") -> suffix
-                else -> {
-                    conn.disconnect()
-                    return Result.failure(IllegalStateException("Unsupported direct media type: ${contentType.ifBlank { "unknown" }}"))
-                }
+                else -> return Result.failure(IllegalStateException("Unsupported direct media type: ${contentType.ifBlank { "unknown" }}"))
             }
-            val base = path.substringBeforeLast('.', path).replace(Regex("[^A-Za-z0-9_-]"), "_").take(80).ifBlank { "media_${System.currentTimeMillis()}" }
-            val stageDir = MediaStoreDownloads.stagingDirectory(context)
+            val base = taskId ?: path.substringBeforeLast('.', path).replace(Regex("[^A-Za-z0-9_-]"), "_").take(80).ifBlank { "media_${System.currentTimeMillis()}" }
             val staged = File(stageDir, "$base.$ext")
-            val temp = File(stageDir, "$base.$ext.part")
-            onProgress(DownloadProgress(0L, contentLength, staged.name, "downloading"))
-            conn.inputStream.use { input ->
-                FileOutputStream(temp).use { output ->
-                    val buffer = ByteArray(16384)
-                    var total = 0L
-                    var lastReported = 0L
+            val append = existing > 0L && code == HttpURLConnection.HTTP_PARTIAL
+            if (code == HttpURLConnection.HTTP_PARTIAL && !append) return Result.failure(IllegalStateException("Server returned a partial response without a resumable byte offset"))
+            if (existing > 0L && !append) temp.delete()
+            val startOffset = if (append) existing else 0L
+            val contentLength = if (append) {
+                connection.getHeaderField("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                    ?: (startOffset + connection.contentLengthLong.coerceAtLeast(0L))
+            } else connection.contentLengthLong
+            val pauseMarker = if (taskId != null) File(stageDir, ".paused") else null
+            onProgress(DownloadProgress(startOffset, contentLength, staged.name, "downloading"))
+            connection.inputStream.use { input ->
+                FileOutputStream(temp, append).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = startOffset
+                    var lastReported = startOffset
                     while (true) {
+                        while (pauseMarker?.exists() == true) {
+                            onProgress(DownloadProgress(total, contentLength, staged.name, "paused"))
+                            Thread.sleep(400)
+                        }
                         val count = input.read(buffer)
                         if (count < 0) break
                         total += count
@@ -368,7 +427,6 @@ object MediaDownloaderEngine {
                     output.flush()
                 }
             }
-            conn.disconnect()
             onProgress(DownloadProgress(temp.length(), contentLength, staged.name, "saving"))
             if (staged.exists()) staged.delete()
             if (!temp.renameTo(staged)) {
@@ -383,6 +441,8 @@ object MediaDownloaderEngine {
             MediaStoreDownloads.publish(context, staged, type).map { "Saved to $it" }
         } catch (e: Exception) {
             Result.failure(IllegalStateException("Direct download failed: ${e.message}"))
+        } finally {
+            conn?.disconnect()
         }
     }
 }

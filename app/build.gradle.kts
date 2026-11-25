@@ -13,8 +13,8 @@ android {
         applicationId = "com.pyserver.v2"
         minSdk = 29
         targetSdk = 35
-        versionCode = 9
-        versionName = "2.7.0"
+        versionCode = 10
+        versionName = "2.8.0"
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -48,6 +48,8 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-ui:1.5.1")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    implementation("androidx.compose.material:material-icons-extended")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // APK-bundled native FFmpeg/JNI runtime. Keep pinned; executable codec updates are full APK updates.
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7")
