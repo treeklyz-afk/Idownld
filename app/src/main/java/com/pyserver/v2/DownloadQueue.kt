@@ -48,6 +48,7 @@ data class DownloadTaskSnapshot(
 /** Enqueue independent requests: each can be observed, paused, resumed, or cancelled separately. */
 object DownloadQueue {
     const val TAG = "pyserver-download"
+    private const val PREFS_NAME = "pyserver_download_queue"
 
     private const val KEY_TASK_ID = "task_id"
     private const val KEY_TITLE = "title"
@@ -92,6 +93,12 @@ object DownloadQueue {
             .addTag(TAG)
             .addTag(taskId)
             .build()
+        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit()
+            .putString(metaKey(request.id, "task_id"), taskId)
+            .putString(metaKey(request.id, "title"), title)
+            .putString(metaKey(request.id, "url"), sourceUrl)
+            .putString(metaKey(request.id, "thumbnail"), thumbnailUrl)
+            .commit()
         WorkManager.getInstance(context.applicationContext).enqueue(request)
         return request.id
     }
@@ -105,7 +112,8 @@ object DownloadQueue {
         val wm = WorkManager.getInstance(context.applicationContext)
         val info = runCatching { wm.getWorkInfoById(id).get() }.getOrNull() ?: return false
         if (info.state.isFinished) return false
-        val taskId = info.inputData.getString(KEY_TASK_ID) ?: id.toString()
+        val taskId = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(metaKey(id, "task_id"), id.toString()) ?: id.toString()
         val dir = taskDirectory(context, taskId)
         val marker = File(dir, ".paused")
         return runCatching {
@@ -133,14 +141,14 @@ object DownloadQueue {
         WorkManager.getInstance(context.applicationContext).getWorkInfoById(id).get()?.let { snapshot(context, it) }
 
     private fun snapshot(context: Context, info: WorkInfo): DownloadTaskSnapshot {
-        val input = info.inputData
-        val taskId = input.getString(KEY_TASK_ID) ?: info.id.toString()
+        val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val taskId = prefs.getString(metaKey(info.id, "task_id"), info.id.toString()) ?: info.id.toString()
         return DownloadTaskSnapshot(
             id = info.id,
             taskId = taskId,
-            title = input.getString(KEY_TITLE).orEmpty().ifBlank { "Media download" },
-            sourceUrl = input.getString(KEY_URL).orEmpty(),
-            thumbnailUrl = input.getString(KEY_THUMBNAIL_URL).orEmpty(),
+            title = prefs.getString(metaKey(info.id, "title"), null).orEmpty().ifBlank { "Media download" },
+            sourceUrl = prefs.getString(metaKey(info.id, "url"), "").orEmpty(),
+            thumbnailUrl = prefs.getString(metaKey(info.id, "thumbnail"), "").orEmpty(),
             downloadedBytes = info.progress.getLong(MediaDownloadWorker.KEY_DOWNLOADED_BYTES, 0L),
             totalBytes = info.progress.getLong(MediaDownloadWorker.KEY_TOTAL_BYTES, 0L),
             state = info.state,
@@ -148,6 +156,8 @@ object DownloadQueue {
             failureMessage = info.outputData.getString("error").orEmpty()
         )
     }
+
+    private fun metaKey(id: UUID, field: String): String = "${id}_$field"
 
     internal fun taskDirectory(context: Context, taskId: String): File =
         File(File(context.filesDir, "PyServer2/tasks"), taskId)
@@ -331,13 +341,12 @@ class DownloadQueueActionReceiver : BroadcastReceiver() {
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
             try {
                 val workId = intent.getStringExtra(EXTRA_WORK_ID)?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                    ?: intent.getStringExtra(EXTRA_TASK_ID)?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                     ?: return@launch
                 when (intent.action) {
                     ACTION_TOGGLE -> {
-                        val info = runCatching { WorkManager.getInstance(context.applicationContext).getWorkInfoById(workId).get() }.getOrNull()
-                        if (info?.inputData?.getString("task_id") != null) {
-                            val markerExists = File(DownloadQueue.taskDirectory(context, info.inputData.getString("task_id")!!), ".paused").exists()
+                        val taskId = intent.getStringExtra(EXTRA_TASK_ID)
+                        if (!taskId.isNullOrBlank()) {
+                            val markerExists = File(DownloadQueue.taskDirectory(context, taskId), ".paused").exists()
                             if (markerExists) DownloadQueue.resume(context, workId) else DownloadQueue.pause(context, workId)
                         }
                     }
