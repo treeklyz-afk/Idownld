@@ -2,6 +2,7 @@ package com.pyserver.v2
 
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -116,12 +117,13 @@ fun PyServerMediaApp() {
 
     val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
     val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    val versionMapState = remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
-    val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+    val termuxInstalledState = remember { mutableStateOf(TermuxCommandBridge.isInstalled(context)) }
+    val termuxPermissionState = remember { mutableStateOf(TermuxCommandBridge.hasRunCommandPermission(context)) }
+    val playlistSelectionState = remember { mutableStateOf<Set<Int>>(emptySet()) }
 
     // Terminal state inside PKG tab
-    val termCmdState = remember { mutableStateOf("tools") }
-    val termOutputState = remember { mutableStateOf("Terminal ready. Type 'help', 'tools', 'ls', or 'pkg install <id>'.") }
+    val termCmdState = remember { mutableStateOf("pkg list-installed") }
+    val termOutputState = remember { mutableStateOf("Connect the official Termux app to run real pkg and shell commands.") }
 
     val gatewayUrlState = remember { mutableStateOf("") }
     val apiTokenState = remember { mutableStateOf("") }
@@ -129,25 +131,23 @@ fun PyServerMediaApp() {
 
     val workingState = remember { mutableStateOf(false) }
     val loaderTitleState = remember { mutableStateOf("Analyzing media...") }
-    val statusMsgState = remember { mutableStateOf("Paste any URL & tap Analyze") }
+    val statusMsgState = remember { mutableStateOf("Install Termux and yt-dlp for site analysis; direct media URLs can be inspected without it") }
     val logsState = remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(line: String) {
         logsState.value = (logsState.value + line).takeLast(12)
     }
 
-    fun refreshTools() {
-        toolStatusesState.value = AssetsAndPackageManager.getCoreToolsStatus(context)
-        versionMapState.value = packagesState.value.associate { pkg ->
-            pkg.id to AssetsAndPackageManager.getInstalledVersion(context, pkg.id)
-        }
+    fun refreshTermuxStatus() {
+        termuxInstalledState.value = TermuxCommandBridge.isInstalled(context)
+        termuxPermissionState.value = TermuxCommandBridge.hasRunCommandPermission(context)
     }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
-        }
-        refreshTools()
+        refreshTermuxStatus()
+        val result = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context) }
+        result.onSuccess { packagesState.value = it }
+            .onFailure { appendLog("Catalog load failed: ${it.message}") }
     }
 
     val bgDark = Color(0xFF060911)
@@ -173,7 +173,7 @@ fun PyServerMediaApp() {
                 )
                 NavigationBarItem(
                     selected = tabState.value == 1,
-                    onClick = { tabState.value = 1; refreshTools() },
+                    onClick = { tabState.value = 1; refreshTermuxStatus() },
                     icon = { Text(">_", color = if (tabState.value == 1) cyanAccent else Color.Gray) },
                     label = { Text("PKG Term", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
@@ -315,7 +315,8 @@ fun PyServerMediaApp() {
                                                 res.onSuccess { info ->
                                                     analysisState.value = info
                                                     selectedFormatState.value = info.formats.firstOrNull()
-                                                    statusMsgState.value = "Loaded ${info.formats.size} formats"
+                                                    playlistSelectionState.value = info.entries.map { it.playlistIndex }.toSet()
+                                                    statusMsgState.value = if (info.entries.isEmpty()) "Loaded ${info.formats.size} formats" else "Listed ${info.entries.size} collection items"
                                                     appendLog("Analyzed: ${info.title}")
                                                 }.onFailure { err ->
                                                     statusMsgState.value = err.message ?: "Analyze error"
@@ -359,7 +360,7 @@ fun PyServerMediaApp() {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        "${info.extractor} • ${info.duration} • ${info.formats.size} formats",
+                                        "${info.extractor} • ${info.duration} • ${info.formats.size} formats${if (info.entries.isNotEmpty()) " • ${info.entries.size} items listed" else ""}",
                                         color = cyanAccent,
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -367,6 +368,20 @@ fun PyServerMediaApp() {
                             }
                         }
 
+                        if (info.entries.isNotEmpty()) {
+                            item { Text("Collection preview is limited to ${info.entryLimit} items. Select listed items or download the whole collection.", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall) }
+                        }
+                        items(info.entries, key = { it.id }) { entry ->
+                            Row(modifier = Modifier.fillMaxWidth().background(cardDark, RoundedCornerShape(10.dp)), verticalAlignment = Alignment.CenterVertically) {
+                                Checkbox(checked = entry.playlistIndex in playlistSelectionState.value, onCheckedChange = { checked ->
+                                    playlistSelectionState.value = if (checked) playlistSelectionState.value + entry.playlistIndex else playlistSelectionState.value - entry.playlistIndex
+                                })
+                                Column(modifier = Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                    Text("${entry.playlistIndex}. ${entry.title}", color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Text(entry.id, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                        }
                         items(info.formats) { fmt ->
                             val chosen = selectedFormatState.value == fmt
                             Card(
@@ -422,19 +437,15 @@ fun PyServerMediaApp() {
                                     loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            MediaDownloaderEngine.downloadMedia(
-                                                context,
-                                                mediaUrlState.value,
-                                                fmt,
-                                                useAria2State.value
-                                            ) { line -> appendLog(line) }
+                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, mediaUrlState.value, fmt, useAria2State.value) { appendLog(it) }
+                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), useAria2State.value) { appendLog(it) }
                                         }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
                                         appendLog(statusMsgState.value)
                                     }
                                 },
-                                enabled = !workingState.value && selectedFormatState.value != null,
+                                enabled = !workingState.value && selectedFormatState.value != null && (info.entries.isEmpty() || playlistSelectionState.value.isNotEmpty()),
                                 shape = RoundedCornerShape(14.dp),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = cyanAccent,
@@ -442,7 +453,24 @@ fun PyServerMediaApp() {
                                 ),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Download Format", fontWeight = FontWeight.Bold)
+                                Text(if (info.entries.isEmpty()) "Download Format" else "Download selected (${playlistSelectionState.value.size})", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        if (info.entries.isNotEmpty()) {
+                            item {
+                                OutlinedButton(onClick = {
+                                    val fmt = selectedFormatState.value ?: return@OutlinedButton
+                                    workingState.value = true
+                                    loaderTitleState.value = "Downloading full collection..."
+                                    scope.launch {
+                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, null, useAria2State.value) { appendLog(it) } }
+                                        workingState.value = false
+                                        statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
+                                        appendLog(statusMsgState.value)
+                                    }
+                                }, enabled = !workingState.value && selectedFormatState.value != null, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Download full collection", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -462,11 +490,17 @@ fun PyServerMediaApp() {
                                 modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("PKG Terminal", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                Text("Official Termux Companion", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                Text(if (!termuxInstalledState.value) "Install Termux separately to use real pkg and yt-dlp." else if (!termuxPermissionState.value) "Grant PyServer the Termux Run Command permission and enable allow-external-apps in Termux." else "Connected to Termux. Package installs use its official apt repository.", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedButton(onClick = { if (termuxInstalledState.value) TermuxCommandBridge.openTermux(context) else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/termux/termux-app/releases"))) }, modifier = Modifier.weight(1f)) { Text(if (termuxInstalledState.value) "Open Termux" else "Install Termux", color = cyanAccent) }
+                                    OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.weight(1f)) { Text("Grant Run permission", color = cyanAccent) }
+                                }
+                                Text("One-time setup: in Android App Info > Permissions > Additional permissions, grant “Run commands in Termux environment” to this app. In Termux set allow-external-apps=true in ~/.termux/termux.properties. Run termux-setup-storage and grant Termux shared-storage access (Android 11+ may require its “manage all files” access). This app itself does not request broad all-files access.", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
                                 OutlinedTextField(
                                     value = termCmdState.value,
                                     onValueChange = { termCmdState.value = it },
-                                    label = { Text("Command (help, tools, ls, pkg install yt-dlp)") },
+                                    label = { Text("Termux command (example: pkg install python-yt-dlp)") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -536,15 +570,13 @@ fun PyServerMediaApp() {
                                         workingState.value = true
                                         loaderTitleState.value = "Syncing packages..."
                                         scope.launch {
-                                            AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
-                                            val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value)
-                                            }
+                                            val saved = AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
+                                            val res = if (saved.isSuccess) withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value) }
+                                                else Result.failure(saved.exceptionOrNull() ?: IllegalStateException("Could not save manifest URL"))
                                             workingState.value = false
                                             res.onSuccess { list ->
                                                 packagesState.value = list
-                                                refreshTools()
-                                                statusMsgState.value = "${list.size} packages ready"
+                                                statusMsgState.value = "${list.size} Termux packages ready; Install/update fetches the latest repository version"
                                             }.onFailure { err ->
                                                 statusMsgState.value = err.message ?: "Manifest error"
                                             }
@@ -565,8 +597,7 @@ fun PyServerMediaApp() {
                     }
 
                     items(packagesState.value) { pkg ->
-                        val localVer = versionMapState.value[pkg.id]
-                        val btnLabel = if (localVer == null) "Install" else "Update"
+                        val btnLabel = "Install / update"
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(14.dp),
@@ -581,7 +612,8 @@ fun PyServerMediaApp() {
                             ) {
                                 Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                     Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("v${pkg.version} • Installed: ${localVer ?: "None"}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                    Text("${pkg.id} • catalog version ${pkg.version}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                    Text(pkg.description, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
                                 }
                                 Button(
                                     onClick = {
@@ -589,11 +621,12 @@ fun PyServerMediaApp() {
                                         loaderTitleState.value = "Installing ${pkg.name}..."
                                         scope.launch {
                                             val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.installPackage(context, pkg) { statusMsgState.value = it }
+                                                AssetsAndPackageManager.installPackage(context, pkg)
                                             }
                                             workingState.value = false
-                                            refreshTools()
+                                            refreshTermuxStatus()
                                             statusMsgState.value = res.getOrElse { it.message ?: "Failed" }
+                                            termOutputState.value = statusMsgState.value
                                         }
                                     },
                                     enabled = !workingState.value,

@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": 3,
+  "updatedAtUtc": "2026-11-25T09:27:35Z",
+  "repository": {
+    "name": "Official Termux main repository",
+    "url": "https://packages.termux.dev/apt/termux-main",
+    "architecture": "aarch64",
+    "releaseTrack": "rolling"
+  },
+  "packages": [
+    {
+      "id": "python",
+      "name": "Python",
+      "version": "3.14.10",
+      "category": "Runtime",
+      "description": "Python runtime and pip package manager. Installed with dependencies by Termux pkg."
+    },
+    {
+      "id": "python-yt-dlp",
+      "name": "yt-dlp (Termux)",
+      "version": "2026.11.23",
+      "category": "Media",
+      "description": "Official Termux yt-dlp package. Provides the yt-dlp executable and recommends FFmpeg plus yt-dlp-ejs for JavaScript extractors."
+    },
+    {
+      "id": "ffmpeg",
+      "name": "FFmpeg",
+      "version": "9.1",
+      "category": "Media",
+      "description": "Android/Termux build of FFmpeg for merging and media conversion."
+    },
+    {
+      "id": "yt-dlp-ejs",
+      "name": "yt-dlp JavaScript support",
+      "version": "0.8.0-1",
+      "category": "Media",
+      "description": "Recommended by the official python-yt-dlp package for modern JavaScript-based extractors such as YouTube."
+    },
+    {
+      "id": "aria2",
+      "name": "aria2",
+      "version": "1.37.0-3",
+      "category": "Networking",
+      "description": "Multi-connection downloader; available to Termux commands and compatible tools."
+    },
+    {
+      "id": "nodejs-lts",
+      "name": "Node.js LTS",
+      "version": "24.22.3",
+      "category": "Runtime",
+      "description": "JavaScript runtime that can help yt-dlp's JavaScript-based extractors when required."
+    }
+  ]
+}
