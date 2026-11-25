@@ -41,6 +41,6 @@ object YtDlpRuntime {
             file
         }
         require(files.isNotEmpty()) { "yt-dlp produced no media files" }
-        files
+        return files
     }
 }
