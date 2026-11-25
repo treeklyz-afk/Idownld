@@ -1,4 +1,4 @@
-name: Build PyServer 2.0 APK
+name: Build PyServer 2.0 Smart APK
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  build-pyserver-apk:
+  smart-scaffold-and-build:
     runs-on: ubuntu-latest
 
     steps:
@@ -22,7 +22,7 @@ jobs:
           ref: main
           fetch-depth: 0
 
-      - name: Scaffold mobile-friendly Jetpack Compose project & Python bridge
+      - name: Scaffold project sources with GIF & JSON animation support
         run: |
           set -e
           mkdir -p app/src/main/java/com/pyserver/v2
@@ -30,6 +30,7 @@ jobs:
           mkdir -p app/src/main/assets/tools
           mkdir -p app/src/main/assets/packages
           mkdir -p app/src/main/assets/scripts
+          mkdir -p app/src/main/assets/animations
 
           cat <<'EOF' > settings.gradle.kts
           pluginManagement {
@@ -46,7 +47,7 @@ jobs:
                   mavenCentral()
               }
           }
-          rootProject.name = "PyServer2Mobile"
+          rootProject.name = "PyServer2Studio"
           include(":app")
           EOF
 
@@ -79,8 +80,8 @@ jobs:
                   applicationId = "com.pyserver.v2"
                   minSdk = 26
                   targetSdk = 35
-                  versionCode = 2
-                  versionName = "2.0.0"
+                  versionCode = 3
+                  versionName = "2.1.0"
               }
 
               buildFeatures {
@@ -103,6 +104,7 @@ jobs:
               implementation(platform("androidx.compose:compose-bom:2024.11.00"))
               implementation("androidx.compose.ui:ui")
               implementation("androidx.compose.ui:ui-graphics")
+              implementation("androidx.compose.animation:animation")
               implementation("androidx.compose.material3:material3")
               implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
           }
@@ -150,6 +152,17 @@ jobs:
               </application>
 
           </manifest>
+          EOF
+
+          cat <<'EOF' > app/src/main/assets/animations/pulse_anim.json
+          {
+            "animation_name": "pyserver_pulse",
+            "fps": 15,
+            "scale_min": 0.96,
+            "scale_max": 1.04,
+            "gif_fps": 12,
+            "gif_width": 480
+          }
           EOF
 
           cat <<'EOF' > app/src/main/assets/scripts/engine_bridge.py
@@ -203,6 +216,11 @@ jobs:
                       reverse=True,
                   )
                   formats.append({
+                      "format_id": "gif_clip",
+                      "label": "Animated GIF (480w • 12fps)",
+                      "media_type": "gif",
+                  })
+                  formats.append({
                       "format_id": "bestaudio",
                       "label": "Audio Only (MP3)",
                       "media_type": "audio",
@@ -250,6 +268,19 @@ jobs:
                           outFile.setReadable(true, false)
                       }
                   } catch (_: Exception) {
+                  }
+              }
+
+              fun loadAnimationConfig(context: Context): JSONObject {
+                  return try {
+                      val raw = context.assets.open("animations/pulse_anim.json").bufferedReader().use { it.readText() }
+                      JSONObject(raw)
+                  } catch (_: Exception) {
+                      JSONObject().apply {
+                          put("fps", 15)
+                          put("gif_fps", 12)
+                          put("gif_width", 480)
+                      }
                   }
               }
 
@@ -539,7 +570,7 @@ jobs:
           data class FormatChoice(
               val formatId: String,
               val titleLabel: String,
-              val mediaType: String,
+              val mediaType: String, // "video", "gif", "audio"
               val metaInfo: String
           )
 
@@ -578,6 +609,7 @@ jobs:
                               duration = "N/A",
                               formats = listOf(
                                   FormatChoice("direct", "Direct File Download", "video", "Direct stream"),
+                                  FormatChoice("gif_clip", "Animated GIF (480w • 12fps)", "gif", "Requires FFmpeg"),
                                   FormatChoice("bestaudio", "Audio Only (MP3)", "audio", "Requires FFmpeg")
                               )
                           )
@@ -613,6 +645,7 @@ jobs:
                               }
                           }
                       }
+                      formats.add(FormatChoice("gif_clip", "Animated GIF (480w • 12fps)", "gif", "Converted via FFmpeg"))
                       formats.add(FormatChoice("bestaudio", "Audio Only • MP3", "audio", "Extracted via FFmpeg"))
                       Result.success(
                           MediaAnalysis(
@@ -645,6 +678,37 @@ jobs:
                   }
 
                   return try {
+                      if (choice.mediaType == "gif") {
+                          val animCfg = PythonRunner.loadAnimationConfig(context)
+                          val fps = animCfg.optInt("gif_fps", 12)
+                          val width = animCfg.optInt("gif_width", 480)
+                          val tempMp4 = File(outDir, "tmp_gif_${System.currentTimeMillis()}.mp4")
+                          val outGif = File(outDir, "anim_${System.currentTimeMillis()}.gif")
+
+                          val dlCmd = mutableListOf(ytdlp, "--no-playlist", "-f", "best[height<=720]/best", "-o", tempMp4.absolutePath)
+                          if (File(ffmpeg).exists() && File(ffmpeg).canExecute()) {
+                              dlCmd.addAll(listOf("--ffmpeg-location", ffmpeg))
+                          }
+                          dlCmd.add(url)
+                          val dlCode = ProcessBuilder(dlCmd).redirectErrorStream(true).start().waitFor()
+                          if (dlCode != 0 || !tempMp4.exists()) {
+                              return Result.failure(Exception("GIF source download failed"))
+                          }
+
+                          val ffCmd = listOf(
+                              ffmpeg, "-y", "-i", tempMp4.absolutePath,
+                              "-vf", "fps=$fps,scale=$width:-1:flags=lanczos",
+                              outGif.absolutePath
+                          )
+                          val ffCode = ProcessBuilder(ffCmd).redirectErrorStream(true).start().waitFor()
+                          if (tempMp4.exists()) tempMp4.delete()
+                          return if (ffCode == 0 && outGif.exists()) {
+                              Result.success("Saved GIF: ${outGif.absolutePath}")
+                          } else {
+                              Result.failure(Exception("FFmpeg GIF conversion failed"))
+                          }
+                      }
+
                       val outTemplate = File(outDir, "%(title).75s [%(id)s].%(ext)s").absolutePath
                       val cmd = mutableListOf(ytdlp, "--no-playlist", "-o", outTemplate)
                       if (File(ffmpeg).exists() && File(ffmpeg).canExecute()) {
@@ -841,6 +905,12 @@ jobs:
           import android.os.Bundle
           import androidx.activity.ComponentActivity
           import androidx.activity.compose.setContent
+          import androidx.compose.animation.animateColorAsState
+          import androidx.compose.animation.core.RepeatMode
+          import androidx.compose.animation.core.animateFloat
+          import androidx.compose.animation.core.infiniteRepeatable
+          import androidx.compose.animation.core.rememberInfiniteTransition
+          import androidx.compose.animation.core.tween
           import androidx.compose.foundation.border
           import androidx.compose.foundation.clickable
           import androidx.compose.foundation.layout.*
@@ -851,6 +921,7 @@ jobs:
           import androidx.compose.runtime.*
           import androidx.compose.ui.Alignment
           import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.scale
           import androidx.compose.ui.graphics.Color
           import androidx.compose.ui.platform.LocalClipboardManager
           import androidx.compose.ui.platform.LocalContext
@@ -866,43 +937,58 @@ jobs:
           class MainActivity : ComponentActivity() {
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
-                  setContent { PyServerResponsiveApp() }
+                  setContent { PyServerAnimatedApp() }
               }
           }
 
           @Composable
-          fun PyServerResponsiveApp() {
+          fun PyServerAnimatedApp() {
               val context = LocalContext.current
               val clipboard = LocalClipboardManager.current
               val scope = rememberCoroutineScope()
 
-              var tab by remember { mutableStateOf(0) }
-              var mediaUrl by remember { mutableStateOf("") }
-              var useAria2 by remember { mutableStateOf(true) }
-              var usePyBridge by remember { mutableStateOf(true) }
-              var analysis by remember { mutableStateOf<MediaAnalysis?>(null) }
-              var selectedFormat by remember { mutableStateOf<FormatChoice?>(null) }
+              val animCfg = remember { PythonRunner.loadAnimationConfig(context) }
+              val scaleMin = animCfg.optDouble("scale_min", 0.96).toFloat()
+              val scaleMax = animCfg.optDouble("scale_max", 1.04).toFloat()
 
-              var manifestUrl by remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
-              var packages by remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-              var versionMap by remember { mutableStateOf>(emptyMap()) }
-              var toolStatuses by remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+              val infiniteTransition = rememberInfiniteTransition(label = "pyserver_pulse")
+              val pulseScale = infiniteTransition.animateFloat(
+                  initialValue = scaleMin,
+                  targetValue = scaleMax,
+                  animationSpec = infiniteRepeatable(
+                      animation = tween(durationMillis = 1200),
+                      repeatMode = RepeatMode.Reverse
+                  ),
+                  label = "badge_scale"
+              )
 
-              var gatewayUrl by remember { mutableStateOf("https://your-gateway.onrender.com") }
-              var apiToken by remember { mutableStateOf("") }
-              var bgActive by remember { mutableStateOf(false) }
+              val tabState = remember { mutableStateOf(0) }
+              val mediaUrlState = remember { mutableStateOf("") }
+              val useAria2State = remember { mutableStateOf(true) }
+              val usePyBridgeState = remember { mutableStateOf(true) }
+              val analysisState = remember { mutableStateOf<MediaAnalysis?>(null) }
+              val selectedFormatState = remember { mutableStateOf<FormatChoice?>(null) }
 
-              var working by remember { mutableStateOf(false) }
-              var statusMsg by remember { mutableStateOf("Booting mobile engine...") }
-              var logs by remember { mutableStateOf(listOf<String>()) }
+              val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
+              val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
+              val versionMapState = remember { mutableStateOf>(emptyMap()) }
+              val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+
+              val gatewayUrlState = remember { mutableStateOf("https://your-gateway.onrender.com") }
+              val apiTokenState = remember { mutableStateOf("") }
+              val bgActiveState = remember { mutableStateOf(false) }
+
+              val workingState = remember { mutableStateOf(false) }
+              val statusMsgState = remember { mutableStateOf("Booting animated engine...") }
+              val logsState = remember { mutableStateOf(listOf<String>()) }
 
               fun appendLog(msg: String) {
-                  logs = (logs + msg).takeLast(12)
+                  logsState.value = (logsState.value + msg).takeLast(12)
               }
 
               fun refreshTools() {
-                  toolStatuses = AssetsAndPackageManager.getCoreToolsStatus(context)
-                  versionMap = packages.associate {
+                  toolStatusesState.value = AssetsAndPackageManager.getCoreToolsStatus(context)
+                  versionMapState.value = packagesState.value.associate {
                       it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id)
                   }
               }
@@ -912,7 +998,7 @@ jobs:
                       AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
                   }
                   refreshTools()
-                  statusMsg = "Ready • Mobile Responsive Engine"
+                  statusMsgState.value = "Ready • GIF + JSON Animation + Engine"
               }
 
               val bgDark = Color(0xFF070A10)
@@ -921,6 +1007,11 @@ jobs:
               val cyanAccent = Color(0xFF00F0FF)
               val greenOk = Color(0xFF10B981)
               val amberWarn = Color(0xFFF59E0B)
+
+              val statusColor = animateColorAsState(
+                  targetValue = if (bgActiveState.value) greenOk else cyanAccent,
+                  label = "status_color"
+              )
 
               Scaffold(
                   containerColor = bgDark,
@@ -931,21 +1022,21 @@ jobs:
                   bottomBar = {
                       NavigationBar(containerColor = cardDark) {
                           NavigationBarItem(
-                              selected = tab == 0,
-                              onClick = { tab = 0 },
-                              icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tab == 0) cyanAccent else Color.Gray) },
+                              selected = tabState.value == 0,
+                              onClick = { tabState.value = 0 },
+                              icon = { Text("DL", fontWeight = FontWeight.Bold, color = if (tabState.value == 0) cyanAccent else Color.Gray) },
                               label = { Text("Downloader", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                           NavigationBarItem(
-                              selected = tab == 1,
-                              onClick = { tab = 1; refreshTools() },
-                              icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tab == 1) cyanAccent else Color.Gray) },
+                              selected = tabState.value == 1,
+                              onClick = { tabState.value = 1; refreshTools() },
+                              icon = { Text("PKG", fontWeight = FontWeight.Bold, color = if (tabState.value == 1) cyanAccent else Color.Gray) },
                               label = { Text("Packages", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                           NavigationBarItem(
-                              selected = tab == 2,
-                              onClick = { tab = 2 },
-                              icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tab == 2) cyanAccent else Color.Gray) },
+                              selected = tabState.value == 2,
+                              onClick = { tabState.value = 2 },
+                              icon = { Text("BG", fontWeight = FontWeight.Bold, color = if (tabState.value == 2) cyanAccent else Color.Gray) },
                               label = { Text("Token & BG", maxLines = 1, overflow = TextOverflow.Ellipsis) }
                           )
                       }
@@ -983,12 +1074,13 @@ jobs:
                                           fontWeight = FontWeight.Bold
                                       )
                                       Surface(
-                                          color = if (bgActive) greenOk.copy(alpha = 0.16f) else cyanAccent.copy(alpha = 0.14f),
-                                          shape = RoundedCornerShape(8.dp)
+                                          color = statusColor.value.copy(alpha = 0.16f),
+                                          shape = RoundedCornerShape(8.dp),
+                                          modifier = Modifier.scale(pulseScale.value)
                                       ) {
                                           Text(
-                                              if (bgActive) "BG LIVE" else "READY",
-                                              color = if (bgActive) greenOk else cyanAccent,
+                                              if (bgActiveState.value) "BG LIVE" else "ANIM READY",
+                                              color = statusColor.value,
                                               style = MaterialTheme.typography.labelSmall,
                                               fontWeight = FontWeight.Bold,
                                               modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -996,7 +1088,7 @@ jobs:
                                       }
                                   }
                                   Text(
-                                      statusMsg,
+                                      statusMsgState.value,
                                       color = Color(0xFFCBD5E1),
                                       style = MaterialTheme.typography.bodySmall,
                                       maxLines = 2,
@@ -1006,7 +1098,7 @@ jobs:
                           }
                       }
 
-                      when (tab) {
+                      when (tabState.value) {
                           0 -> {
                               item {
                                   Card(
@@ -1021,9 +1113,9 @@ jobs:
                                           verticalArrangement = Arrangement.spacedBy(10.dp)
                                       ) {
                                           OutlinedTextField(
-                                              value = mediaUrl,
-                                              onValueChange = { mediaUrl = it },
-                                              label = { Text("Paste Video / Media URL") },
+                                              value = mediaUrlState.value,
+                                              onValueChange = { mediaUrlState.value = it },
+                                              label = { Text("Paste Video / GIF / Media URL") },
                                               singleLine = true,
                                               shape = RoundedCornerShape(12.dp),
                                               modifier = Modifier.fillMaxWidth()
@@ -1034,7 +1126,7 @@ jobs:
                                               verticalAlignment = Alignment.CenterVertically
                                           ) {
                                               Text("Python Bridge", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                              Switch(checked = usePyBridge, onCheckedChange = { usePyBridge = it })
+                                              Switch(checked = usePyBridgeState.value, onCheckedChange = { usePyBridgeState.value = it })
                                           }
                                           Row(
                                               modifier = Modifier.fillMaxWidth(),
@@ -1042,14 +1134,14 @@ jobs:
                                               verticalAlignment = Alignment.CenterVertically
                                           ) {
                                               Text("aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
-                                              Switch(checked = useAria2, onCheckedChange = { useAria2 = it })
+                                              Switch(checked = useAria2State.value, onCheckedChange = { useAria2State.value = it })
                                           }
                                           Row(
                                               horizontalArrangement = Arrangement.spacedBy(8.dp),
                                               modifier = Modifier.fillMaxWidth()
                                           ) {
                                               OutlinedButton(
-                                                  onClick = { clipboard.getText()?.text?.let { mediaUrl = it } },
+                                                  onClick = { clipboard.getText()?.text?.let { mediaUrlState.value = it } },
                                                   shape = RoundedCornerShape(12.dp),
                                                   modifier = Modifier.weight(1f)
                                               ) {
@@ -1057,23 +1149,27 @@ jobs:
                                               }
                                               Button(
                                                   onClick = {
-                                                      working = true
-                                                      statusMsg = "Analyzing..."
+                                                      workingState.value = true
+                                                      statusMsgState.value = "Analyzing..."
                                                       scope.launch {
                                                           val res = withContext(Dispatchers.IO) {
-                                                              MediaDownloaderEngine.analyzeUrl(context, mediaUrl, usePyBridge)
+                                                              MediaDownloaderEngine.analyzeUrl(
+                                                                  context,
+                                                                  mediaUrlState.value,
+                                                                  usePyBridgeState.value
+                                                              )
                                                           }
-                                                          working = false
+                                                          workingState.value = false
                                                           res.onSuccess {
-                                                              analysis = it
-                                                              selectedFormat = it.formats.firstOrNull()
-                                                              statusMsg = "Found ${it.formats.size} formats"
+                                                              analysisState.value = it
+                                                              selectedFormatState.value = it.formats.firstOrNull()
+                                                              statusMsgState.value = "Found ${it.formats.size} formats"
                                                           }.onFailure {
-                                                              statusMsg = "Error: ${it.message}"
+                                                              statusMsgState.value = "Error: ${it.message}"
                                                           }
                                                       }
                                                   },
-                                                  enabled = !working,
+                                                  enabled = !workingState.value,
                                                   shape = RoundedCornerShape(12.dp),
                                                   colors = ButtonDefaults.buttonColors(
                                                       containerColor = cyanAccent,
@@ -1081,14 +1177,14 @@ jobs:
                                                   ),
                                                   modifier = Modifier.weight(2f)
                                               ) {
-                                                  Text(if (working) "Working..." else "Analyze", maxLines = 1)
+                                                  Text(if (workingState.value) "Working..." else "Analyze", maxLines = 1)
                                               }
                                           }
                                       }
                                   }
                               }
 
-                              analysis?.let { info ->
+                              analysisState.value?.let { info ->
                                   item {
                                       Card(
                                           colors = CardDefaults.cardColors(containerColor = cardDark),
@@ -1112,7 +1208,7 @@ jobs:
                                       }
                                   }
                                   items(info.formats) { fmt ->
-                                      val picked = selectedFormat == fmt
+                                      val picked = selectedFormatState.value == fmt
                                       Card(
                                           colors = CardDefaults.cardColors(
                                               containerColor = if (picked) Color(0xFF17253B) else cardDark
@@ -1125,7 +1221,7 @@ jobs:
                                                   if (picked) cyanAccent else borderNeon,
                                                   RoundedCornerShape(12.dp)
                                               )
-                                              .clickable { selectedFormat = fmt }
+                                              .clickable { selectedFormatState.value = fmt }
                                       ) {
                                           Row(
                                               modifier = Modifier
@@ -1150,27 +1246,33 @@ jobs:
                                                       overflow = TextOverflow.Ellipsis
                                                   )
                                               }
-                                              RadioButton(selected = picked, onClick = { selectedFormat = fmt })
+                                              RadioButton(
+                                                  selected = picked,
+                                                  onClick = { selectedFormatState.value = fmt }
+                                              )
                                           }
                                       }
                                   }
                                   item {
                                       Button(
                                           onClick = {
-                                              val fmt = selectedFormat ?: return@Button
-                                              working = true
-                                              statusMsg = "Downloading ${fmt.titleLabel}..."
+                                              val fmt = selectedFormatState.value ?: return@Button
+                                              workingState.value = true
+                                              statusMsgState.value = "Downloading ${fmt.titleLabel}..."
                                               scope.launch {
                                                   val res = withContext(Dispatchers.IO) {
-                                                      MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) {
-                                                          appendLog(it)
-                                                      }
+                                                      MediaDownloaderEngine.downloadMedia(
+                                                          context,
+                                                          mediaUrlState.value,
+                                                          fmt,
+                                                          useAria2State.value
+                                                      ) { appendLog(it) }
                                                   }
-                                                  working = false
-                                                  statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                                  workingState.value = false
+                                                  statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
                                               }
                                           },
-                                          enabled = !working && selectedFormat != null,
+                                          enabled = !workingState.value && selectedFormatState.value != null,
                                           shape = RoundedCornerShape(12.dp),
                                           colors = ButtonDefaults.buttonColors(
                                               containerColor = cyanAccent,
@@ -1198,7 +1300,7 @@ jobs:
                                           verticalArrangement = Arrangement.spacedBy(8.dp)
                                       ) {
                                           Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
-                                          toolStatuses.forEach { st ->
+                                          toolStatusesState.value.forEach { st ->
                                               Row(
                                                   modifier = Modifier.fillMaxWidth(),
                                                   horizontalArrangement = Arrangement.SpaceBetween
@@ -1227,31 +1329,31 @@ jobs:
                                           verticalArrangement = Arrangement.spacedBy(10.dp)
                                       ) {
                                           OutlinedTextField(
-                                              value = manifestUrl,
-                                              onValueChange = { manifestUrl = it },
+                                              value = manifestUrlState.value,
+                                              onValueChange = { manifestUrlState.value = it },
                                               label = { Text("GitHub manifest.json URL") },
                                               shape = RoundedCornerShape(12.dp),
                                               modifier = Modifier.fillMaxWidth()
                                           )
                                           Button(
                                               onClick = {
-                                                  working = true
-                                                  AssetsAndPackageManager.setManifestUrl(context, manifestUrl)
+                                                  workingState.value = true
+                                                  AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
                                                   scope.launch {
                                                       val res = withContext(Dispatchers.IO) {
-                                                          AssetsAndPackageManager.fetchManifest(context, manifestUrl)
+                                                          AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value)
                                                       }
-                                                      working = false
+                                                      workingState.value = false
                                                       res.onSuccess { list ->
-                                                          packages = list
+                                                          packagesState.value = list
                                                           refreshTools()
-                                                          statusMsg = "Loaded ${list.size} packages"
+                                                          statusMsgState.value = "Loaded ${list.size} packages"
                                                       }.onFailure {
-                                                          statusMsg = "Error: ${it.message}"
+                                                          statusMsgState.value = "Error: ${it.message}"
                                                       }
                                                   }
                                               },
-                                              enabled = !working,
+                                              enabled = !workingState.value,
                                               shape = RoundedCornerShape(12.dp),
                                               colors = ButtonDefaults.buttonColors(
                                                   containerColor = cyanAccent,
@@ -1264,8 +1366,8 @@ jobs:
                                       }
                                   }
                               }
-                              items(packages) { pkg ->
-                                  val localVer = versionMap[pkg.id]
+                              items(packagesState.value) { pkg ->
+                                  val localVer = versionMapState.value[pkg.id]
                                   val action = when {
                                       localVer == null -> "Install"
                                       localVer != pkg.version -> "Update"
@@ -1301,19 +1403,19 @@ jobs:
                                           }
                                           Button(
                                               onClick = {
-                                                  working = true
+                                                  workingState.value = true
                                                   scope.launch {
                                                       val res = withContext(Dispatchers.IO) {
                                                           AssetsAndPackageManager.installPackage(context, pkg) {
-                                                              statusMsg = it
+                                                              statusMsgState.value = it
                                                           }
                                                       }
-                                                      working = false
+                                                      workingState.value = false
                                                       refreshTools()
-                                                      statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                                      statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
                                                   }
                                               },
-                                              enabled = !working,
+                                              enabled = !workingState.value,
                                               shape = RoundedCornerShape(10.dp),
                                               colors = ButtonDefaults.buttonColors(
                                                   containerColor = cyanAccent,
@@ -1347,12 +1449,12 @@ jobs:
                                           ) {
                                               Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
                                               Switch(
-                                                  checked = bgActive,
+                                                  checked = bgActiveState.value,
                                                   onCheckedChange = { enabled ->
-                                                      bgActive = enabled
+                                                      bgActiveState.value = enabled
                                                       val intent = Intent(context, BackgroundEngineService::class.java).apply {
-                                                          putExtra("gateway_url", gatewayUrl.trim())
-                                                          putExtra("token", apiToken.trim())
+                                                          putExtra("gateway_url", gatewayUrlState.value.trim())
+                                                          putExtra("token", apiTokenState.value.trim())
                                                       }
                                                       if (enabled) ContextCompat.startForegroundService(context, intent)
                                                       else context.stopService(intent)
@@ -1360,16 +1462,16 @@ jobs:
                                               )
                                           }
                                           OutlinedTextField(
-                                              value = gatewayUrl,
-                                              onValueChange = { gatewayUrl = it },
+                                              value = gatewayUrlState.value,
+                                              onValueChange = { gatewayUrlState.value = it },
                                               label = { Text("Render Gateway URL") },
                                               singleLine = true,
                                               shape = RoundedCornerShape(12.dp),
                                               modifier = Modifier.fillMaxWidth()
                                           )
                                           OutlinedTextField(
-                                              value = apiToken,
-                                              onValueChange = { apiToken = it },
+                                              value = apiTokenState.value,
+                                              onValueChange = { apiTokenState.value = it },
                                               label = { Text("API Token (/tokenrender)") },
                                               singleLine = true,
                                               shape = RoundedCornerShape(12.dp),
@@ -1377,7 +1479,7 @@ jobs:
                                           )
                                           OutlinedButton(
                                               onClick = {
-                                                  val base = gatewayUrl.trim().trimEnd('/')
+                                                  val base = gatewayUrlState.value.trim().trimEnd('/')
                                                   context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
                                               },
                                               shape = RoundedCornerShape(12.dp),
@@ -1409,7 +1511,7 @@ jobs:
                                       style = MaterialTheme.typography.labelLarge,
                                       fontWeight = FontWeight.Bold
                                   )
-                                  logs.forEach { line ->
+                                  logsState.value.forEach { line ->
                                       Text(
                                           line,
                                           color = Color(0xFFCBD5E1),
@@ -1445,7 +1547,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "Update PyServer 2.0 responsive Jetpack Compose project"
+            git commit -m "Update PyServer 2.0 GIF & JSON animation build"
             git pull --rebase origin main || true
             git push origin HEAD:main
           fi
@@ -1466,11 +1568,35 @@ jobs:
           fi
           chmod +x ./gradlew
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Smart Build with Auto-Repair Fallback
+        run: |
+          set -e
+          if ./gradlew assembleDebug --stacktrace; then
+            echo "Build succeeded on first attempt."
+          else
+            echo "Build failed — running smart Kotlin auto-repair script..."
+            python3 - <<'PY'
+          import pathlib, re
+
+          for kt_path in pathlib.Path("app/src/main/java").rglob("*.kt"):
+              src = kt_path.read_text(encoding="utf-8")
+              orig = src
+              # Replace delegate `var x by remember { mutableStateOf(...) }` with safe `.value` state
+              src = re.sub(
+                  r"\bvar\s+([A-Za-z0-9_]+)\s+by\s+remember\s*\{\s*mutableStateOf\((.*?)\)\s*\}",
+                  r"val \1State = remember { mutableStateOf(\2) }",
+                  src,
+              )
+              src = src.replace("!= \"None\"", ".toString() != \"None\"")
+              if src != orig:
+                  kt_path.write_text(src, encoding="utf-8")
+                  print(f"Patched {kt_path}")
+          PY
+            ./gradlew assembleDebug --stacktrace
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PyServer2-Responsive-APK
+          name: PyServer2-Smart-APK
           path: app/build/outputs/apk/debug/app-debug.apk
