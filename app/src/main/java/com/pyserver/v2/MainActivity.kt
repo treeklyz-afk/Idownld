@@ -109,7 +109,6 @@ fun PyServerMediaApp() {
     val tabState = remember { mutableStateOf(0) } // 0: Media, 1: PKG & Terminal, 2: Token & BG
     val mediaUrlState = remember { mutableStateOf("") }
     val useAria2State = remember { mutableStateOf(false) }
-    val usePyBridgeState = remember { mutableStateOf(false) }
     val showConsoleState = remember { mutableStateOf(false) } // Console hidden by default
 
     val analysisState = remember { mutableStateOf<MediaAnalysis?>(null) }
@@ -307,8 +306,7 @@ fun PyServerMediaApp() {
                                                 val res = withContext(Dispatchers.IO) {
                                                     MediaDownloaderEngine.analyzeUrl(
                                                         context,
-                                                        mediaUrlState.value,
-                                                        usePyBridgeState.value
+                                                        mediaUrlState.value
                                                     )
                                                 }
                                                 workingState.value = false

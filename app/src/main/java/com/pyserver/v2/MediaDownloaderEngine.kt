@@ -36,8 +36,7 @@ object MediaDownloaderEngine {
 
     fun analyzeUrl(
         context: Context,
-        rawUrl: String,
-        preferPythonBridge: Boolean = false
+        rawUrl: String
     ): Result<MediaAnalysis> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL paste karein"))
