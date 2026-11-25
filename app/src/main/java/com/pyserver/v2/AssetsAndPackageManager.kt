@@ -186,17 +186,4 @@ object AssetsAndPackageManager {
             Result.failure(e)
         }
     }
-
-    fun removePackage(context: Context, pkg: ManifestPackage): Result<String> {
-        return try {
-            val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
-            val dest = File(targetDir, pkg.filename)
-            if (dest.exists()) dest.delete()
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().remove("pkg_ver_${pkg.id}").apply()
-            Result.success("Removed ${pkg.name}")
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
 }

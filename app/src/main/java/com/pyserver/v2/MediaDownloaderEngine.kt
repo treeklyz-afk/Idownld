@@ -13,7 +13,7 @@ import java.net.URL
 data class FormatChoice(
     val formatId: String,
     val titleLabel: String,
-    val mediaType: String, // "video", "gif", "audio"
+    val mediaType: String,
     val metaInfo: String
 )
 

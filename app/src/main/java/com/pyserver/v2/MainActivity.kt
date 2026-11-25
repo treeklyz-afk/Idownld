@@ -88,14 +88,16 @@ fun PyServerAnimatedApp() {
 
     fun refreshTools() {
         toolStatusesState.value = AssetsAndPackageManager.getCoreToolsStatus(context)
-        versionMapState.value = packagesState.value.associate {
-            it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id)
+        versionMapState.value = packagesState.value.associate { pkg ->
+            pkg.id to AssetsAndPackageManager.getInstalledVersion(context, pkg.id)
         }
     }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
+            AssetsAndPackageManager.extractAssetsOnStartup(context) { line ->
+                appendLog(line)
+            }
         }
         refreshTools()
         statusMsgState.value = "Ready • GIF + JSON Animation + Engine"
@@ -108,9 +110,9 @@ fun PyServerAnimatedApp() {
     val greenOk = Color(0xFF10B981)
     val amberWarn = Color(0xFFF59E0B)
 
-    val statusColor = animateColorAsState(
+    val badgeColorState = animateColorAsState(
         targetValue = if (bgActiveState.value) greenOk else cyanAccent,
-        label = "status_color"
+        label = "badge_color"
     )
 
     Scaffold(
@@ -174,13 +176,13 @@ fun PyServerAnimatedApp() {
                                 fontWeight = FontWeight.Bold
                             )
                             Surface(
-                                color = statusColor.value.copy(alpha = 0.16f),
+                                color = badgeColorState.value.copy(alpha = 0.16f),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.scale(pulseScale.value)
                             ) {
                                 Text(
                                     if (bgActiveState.value) "BG LIVE" else "ANIM READY",
-                                    color = statusColor.value,
+                                    color = badgeColorState.value,
                                     style = MaterialTheme.typography.labelSmall,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -260,12 +262,12 @@ fun PyServerAnimatedApp() {
                                                     )
                                                 }
                                                 workingState.value = false
-                                                res.onSuccess {
-                                                    analysisState.value = it
-                                                    selectedFormatState.value = it.formats.firstOrNull()
-                                                    statusMsgState.value = "Found ${it.formats.size} formats"
-                                                }.onFailure {
-                                                    statusMsgState.value = "Error: ${it.message}"
+                                                res.onSuccess { info ->
+                                                    analysisState.value = info
+                                                    selectedFormatState.value = info.formats.firstOrNull()
+                                                    statusMsgState.value = "Found ${info.formats.size} formats"
+                                                }.onFailure { err ->
+                                                    statusMsgState.value = "Error: ${err.message}"
                                                 }
                                             }
                                         },
@@ -366,10 +368,10 @@ fun PyServerAnimatedApp() {
                                                 mediaUrlState.value,
                                                 fmt,
                                                 useAria2State.value
-                                            ) { appendLog(it) }
+                                            ) { line -> appendLog(line) }
                                         }
                                         workingState.value = false
-                                        statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
+                                        statusMsgState.value = res.getOrElse { err -> "Failed: ${err.message}" }
                                     }
                                 },
                                 enabled = !workingState.value && selectedFormatState.value != null,
@@ -448,8 +450,8 @@ fun PyServerAnimatedApp() {
                                                 packagesState.value = list
                                                 refreshTools()
                                                 statusMsgState.value = "Loaded ${list.size} packages"
-                                            }.onFailure {
-                                                statusMsgState.value = "Error: ${it.message}"
+                                            }.onFailure { err ->
+                                                statusMsgState.value = "Error: ${err.message}"
                                             }
                                         }
                                     },
@@ -468,6 +470,7 @@ fun PyServerAnimatedApp() {
                     }
                     items(packagesState.value) { pkg ->
                         val localVer = versionMapState.value[pkg.id]
+                        val installedTag = if (localVer != null) "v$localVer" else "None"
                         val action = when {
                             localVer == null -> "Install"
                             localVer != pkg.version -> "Update"
@@ -496,7 +499,7 @@ fun PyServerAnimatedApp() {
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
-                                        "v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}",
+                                        "v${pkg.version} • Installed: $installedTag",
                                         color = Color(0xFF94A3B8),
                                         style = MaterialTheme.typography.bodySmall
                                     )
@@ -506,13 +509,13 @@ fun PyServerAnimatedApp() {
                                         workingState.value = true
                                         scope.launch {
                                             val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.installPackage(context, pkg) {
-                                                    statusMsgState.value = it
+                                                AssetsAndPackageManager.installPackage(context, pkg) { prog ->
+                                                    statusMsgState.value = prog
                                                 }
                                             }
                                             workingState.value = false
                                             refreshTools()
-                                            statusMsgState.value = res.getOrElse { "Failed: ${it.message}" }
+                                            statusMsgState.value = res.getOrElse { err -> "Failed: ${err.message}" }
                                         }
                                     },
                                     enabled = !workingState.value,

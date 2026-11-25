@@ -33,6 +33,8 @@ object PythonRunner {
         } catch (_: Exception) {
             JSONObject().apply {
                 put("fps", 15)
+                put("scale_min", 0.96)
+                put("scale_max", 1.04)
                 put("gif_fps", 12)
                 put("gif_width", 480)
             }
