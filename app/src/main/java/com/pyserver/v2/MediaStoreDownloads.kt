@@ -14,12 +14,6 @@ object MediaStoreDownloads {
     fun stagingDirectory(context: Context): File =
         File(context.cacheDir, "PyServer2/staging").apply { mkdirs() }
 
-    fun publicTermuxDirectory(mediaType: String): String = when (mediaType.lowercase()) {
-        "audio" -> "/storage/emulated/0/Music/PyServer2/Audio"
-        "gif", "image" -> "/storage/emulated/0/Pictures/PyServer2/GIF"
-        else -> "/storage/emulated/0/Movies/PyServer2/Video"
-    }
-
     /** Publishes a finished staged file to Android's media library on Android 10+. */
     fun publish(context: Context, stagedFile: File, mediaType: String): Result<String> {
         if (!stagedFile.isFile || stagedFile.length() == 0L) {

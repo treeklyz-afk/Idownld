@@ -1,12 +1,13 @@
 {
-  "schemaVersion": 1,
-  "catalogVersion": 3,
-  "updatedAtUtc": "2026-11-25T09:27:35Z",
-  "repository": {
-    "name": "Official Termux main repository",
-    "url": "https://packages.termux.dev/apt/termux-main",
-    "architecture": "aarch64",
-    "releaseTrack": "rolling"
+  "schemaVersion": 2,
+  "catalogVersion": 4,
+  "updatedAtUtc": "2026-11-25T09:55:00Z",
+  "runtime": {
+    "applicationId": "com.pyserver.v2",
+    "targetSdk": 35,
+    "delivery": "signed-apk-only",
+    "status": "native-toolchain-pending",
+    "note": "Versions are upstream references only until compatible Android binaries are built and included in a signed APK. Do not install stock Termux packages into this app."
   },
   "packages": [
     {
@@ -14,42 +15,54 @@
       "name": "Python",
       "version": "3.14.10",
       "category": "Runtime",
-      "description": "Python runtime and pip package manager. Installed with dependencies by Termux pkg."
+      "description": "Android-compatible Python runtime planned for signed-APK delivery; this catalog does not install it.",
+      "bundled": false,
+      "license": "Python-2.0"
     },
     {
       "id": "python-yt-dlp",
-      "name": "yt-dlp (Termux)",
+      "name": "yt-dlp",
       "version": "2026.11.23",
       "category": "Media",
-      "description": "Official Termux yt-dlp package. Provides the yt-dlp executable and recommends FFmpeg plus yt-dlp-ejs for JavaScript extractors."
+      "description": "Python media extractor planned for APK bundling; site support depends on current extractors and a compatible JavaScript runtime.",
+      "bundled": false,
+      "license": "Unlicense"
     },
     {
       "id": "ffmpeg",
       "name": "FFmpeg",
       "version": "9.1",
       "category": "Media",
-      "description": "Android/Termux build of FFmpeg for merging and media conversion."
+      "description": "Android-native media tools planned for APK delivery; enabled codecs, dependencies, and license obligations require review.",
+      "bundled": false,
+      "license": "GPL-3.0-or-later (build-dependent)"
     },
     {
       "id": "yt-dlp-ejs",
       "name": "yt-dlp JavaScript support",
       "version": "0.8.0-1",
       "category": "Media",
-      "description": "Recommended by the official python-yt-dlp package for modern JavaScript-based extractors such as YouTube."
+      "description": "Extractor support module planned for APK bundling; requires a compatible JavaScript runtime.",
+      "bundled": false,
+      "license": "MIT"
     },
     {
       "id": "aria2",
       "name": "aria2",
       "version": "1.37.0-3",
       "category": "Networking",
-      "description": "Multi-connection downloader; available to Termux commands and compatible tools."
+      "description": "Native multi-connection downloader planned for signed-APK delivery; not installable from this catalog.",
+      "bundled": false,
+      "license": "GPL-2.0-or-later"
     },
     {
-      "id": "nodejs-lts",
-      "name": "Node.js LTS",
-      "version": "24.22.3",
+      "id": "deno",
+      "name": "Deno",
+      "version": "2.5.6",
       "category": "Runtime",
-      "description": "JavaScript runtime that can help yt-dlp's JavaScript-based extractors when required."
+      "description": "Android-specific JavaScript runtime planned for APK bundling; generic Linux binaries are not Android-compatible.",
+      "bundled": false,
+      "license": "MIT"
     }
   ]
 }

@@ -47,36 +47,6 @@ object MediaDownloaderEngine {
             return Result.failure(IllegalArgumentException("Only HTTP and HTTPS URLs are supported"))
         }
 
-        if (TermuxCommandBridge.isInstalled(context) && TermuxCommandBridge.hasRunCommandPermission(context)) {
-            val result = TermuxCommandBridge.execute(
-                context = context,
-                executable = "${TermuxCommandBridge.TERMUX_PREFIX}/bin/yt-dlp",
-                arguments = listOf(
-                    "--dump-single-json", "--flat-playlist", "--playlist-end",
-                    PLAYLIST_PREVIEW_LIMIT.toString(), "--no-warnings", url
-                ),
-                timeoutSeconds = 150
-            )
-            if (result.isSuccess) {
-                val command = result.getOrThrow()
-                if (command.exitCode == 0 && command.stdout.isNotBlank()) {
-                    try {
-                        return Result.success(parseYtDlpJson(command.stdout))
-                    } catch (e: Exception) {
-                        return Result.failure(IllegalStateException("yt-dlp returned unreadable analysis data: ${e.message}"))
-                    }
-                }
-                val message = (command.stderr.ifBlank { command.stdout }).takeLast(1800)
-                if (message.isNotBlank()) {
-                    return Result.failure(IllegalStateException("yt-dlp analysis failed (exit ${command.exitCode}): $message"))
-                }
-            } else {
-                val msg = result.exceptionOrNull()?.message.orEmpty()
-                if (!msg.contains("not found", true)) {
-                    return Result.failure(result.exceptionOrNull() ?: IllegalStateException("Termux analysis failed"))
-                }
-            }
-        }
         return nativeAnalyzeFallback(url)
     }
 
@@ -149,7 +119,7 @@ object MediaDownloaderEngine {
         }
         val host = parsed.host.lowercase()
         if (host == "youtube.com" || host.endsWith(".youtube.com") || host == "youtu.be" || host.endsWith(".youtu.be")) {
-            return Result.failure(IllegalStateException("Install yt-dlp in the official Termux app to analyze this site"))
+            return Result.failure(IllegalStateException("This APK does not yet bundle yt-dlp. Site/playlist analysis will be available after a compatible signed APK includes the extractor runtime."))
         }
 
         return try {
@@ -167,7 +137,7 @@ object MediaDownloaderEngine {
             conn.disconnect()
             if (code !in 200..299) return Result.failure(IllegalStateException("Media server returned HTTP $code"))
             if (contentType == "text/html" || contentType.contains("mpegurl") || finalUrl.substringBefore('?').endsWith(".m3u8", true)) {
-                return Result.failure(IllegalStateException("This page/playlist needs yt-dlp from the Termux package list"))
+                return Result.failure(IllegalStateException("This page/playlist needs yt-dlp, which is not bundled in this APK yet."))
             }
             val path = finalUrl.substringBefore('?').substringAfterLast('/').lowercase()
             val ext = path.substringAfterLast('.', "")
@@ -206,7 +176,7 @@ object MediaDownloaderEngine {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL empty"))
         if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog)
-        return downloadWithTermux(context, url, choice, null, useAria2, onLog)
+        return Result.failure(IllegalStateException("yt-dlp is not bundled in this APK yet. Direct media-file downloads remain available; site extraction requires a compatible signed APK update."))
     }
 
     /** selectedIndices=null downloads the entire collection; otherwise only the chosen preview items. */
@@ -224,72 +194,7 @@ object MediaDownloaderEngine {
         if (choice.formatId == "direct") {
             return Result.failure(IllegalArgumentException("Direct media URLs do not contain a selectable playlist"))
         }
-        return downloadWithTermux(context, rawUrl.trim(), choice, selectedIndices, useAria2, onLog)
-    }
-
-    private fun downloadWithTermux(
-        context: Context,
-        url: String,
-        choice: FormatChoice,
-        selectedIndices: List<Int>?,
-        useAria2: Boolean,
-        onLog: (String) -> Unit
-    ): Result<String> {
-        if (!TermuxCommandBridge.isInstalled(context)) {
-            return Result.failure(IllegalStateException("Install the official Termux app to use yt-dlp"))
-        }
-        if (!TermuxCommandBridge.hasRunCommandPermission(context)) {
-            return Result.failure(SecurityException("Grant PyServer permission to run commands in Termux"))
-        }
-        if (choice.mediaType == "gif") {
-            return Result.failure(IllegalArgumentException("GIF conversion is not enabled in this Termux build; choose video or audio"))
-        }
-        val root = MediaStoreDownloads.publicTermuxDirectory(choice.mediaType)
-        val storageCheck = TermuxCommandBridge.runShell(
-            context,
-            "if [ ! -d \"\$HOME/storage/shared\" ]; then echo 'Run termux-setup-storage in Termux first'; exit 42; fi; mkdir -p \"$root\" && test -w \"$root\"",
-            timeoutSeconds = 30
-        )
-        if (storageCheck.isFailure || storageCheck.getOrNull()?.exitCode != 0) {
-            return Result.failure(IllegalStateException("Termux storage is not ready. Open Termux, run termux-setup-storage, grant its storage permission, then retry. ${storageCheck.getOrNull()?.stderr.orEmpty()}"))
-        }
-
-        val outputTemplate = "$root/%(title).90s [%(id)s]/%(title).90s [%(id)s].%(ext)s"
-        val args = mutableListOf("--no-warnings", "--newline", "--continue", "-o", outputTemplate)
-        when (choice.mediaType) {
-            "audio" -> args.addAll(listOf("-f", "bestaudio/best"))
-            else -> {
-                val selector = when (choice.formatId) {
-                    "best" -> "bv*+ba/b"
-                    "bestaudio" -> "bestaudio/best"
-                    else -> "${choice.formatId}+bestaudio/best"
-                }
-                args.addAll(listOf("-f", selector, "--merge-output-format", "mp4"))
-            }
-        }
-        if (useAria2) args.addAll(listOf("--downloader", "aria2c", "--downloader-args", "aria2c:-x 8 -s 8 -k 1M"))
-        if (selectedIndices != null) {
-            args.addAll(listOf("--playlist-items", selectedIndices.distinct().sorted().joinToString(",")))
-        } else if (choice.mediaType != "audio" && choice.formatId == "best") {
-            // yt-dlp's normal playlist behavior is retained for complete collection downloads.
-        }
-        args.add(url)
-        onLog("Starting yt-dlp in Termux. Destination: $root")
-        val command = TermuxCommandBridge.execute(
-            context = context,
-            executable = "${TermuxCommandBridge.TERMUX_PREFIX}/bin/yt-dlp",
-            arguments = args,
-            timeoutSeconds = 4 * 60 * 60
-        )
-        if (command.isFailure) return Result.failure(command.exceptionOrNull() ?: IllegalStateException("Termux yt-dlp failed"))
-        val response = command.getOrThrow()
-        val output = response.stdout.trim()
-        val errors = response.stderr.trim()
-        if (output.isNotBlank()) onLog(output.takeLast(3000))
-        if (response.exitCode != 0) {
-            return Result.failure(IllegalStateException((errors.ifBlank { output }).takeLast(2500).ifBlank { "yt-dlp exited with ${response.exitCode}" }))
-        }
-        return Result.success("Download complete. Files saved under $root; each item is placed in its own folder.")
+        return Result.failure(IllegalStateException("Playlist downloads need yt-dlp, which is not bundled in this APK yet. A compatible signed APK update is required."))
     }
 
     private fun nativeStreamDownload(

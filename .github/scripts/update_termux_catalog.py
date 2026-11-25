@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh the app's package catalog versions from the official Termux apt index."""
+"""Refresh upstream Android package version references; this does not publish APK binaries."""
 import gzip
 import json
 import pathlib
@@ -86,9 +86,9 @@ def main() -> int:
             data["updatedAtUtc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             data["catalogVersion"] = int(data.get("catalogVersion", 0)) + 1
             MANIFEST.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            print("Updated Termux catalog package versions.")
+            print("Updated upstream package version references (no binaries installed or published).")
         else:
-            print("Termux package versions are already current; no changes made.")
+            print("Upstream package versions are already current; no changes made.")
         return 0
     finally:
         index_path.unlink(missing_ok=True)

@@ -106,7 +106,7 @@ fun PyServerMediaApp() {
     val clipboard = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
 
-    val tabState = remember { mutableStateOf(0) } // 0: Media, 1: PKG & Terminal, 2: Token & BG
+    val tabState = remember { mutableStateOf(0) } // 0: Media, 1: App Terminal, 2: Token & BG
     val mediaUrlState = remember { mutableStateOf("") }
     val useAria2State = remember { mutableStateOf(false) }
     val showConsoleState = remember { mutableStateOf(false) } // Console hidden by default
@@ -116,13 +116,11 @@ fun PyServerMediaApp() {
 
     val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
     val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    val termuxInstalledState = remember { mutableStateOf(TermuxCommandBridge.isInstalled(context)) }
-    val termuxPermissionState = remember { mutableStateOf(TermuxCommandBridge.hasRunCommandPermission(context)) }
     val playlistSelectionState = remember { mutableStateOf<Set<Int>>(emptySet()) }
 
     // Terminal state inside PKG tab
-    val termCmdState = remember { mutableStateOf("pkg list-installed") }
-    val termOutputState = remember { mutableStateOf("Connect the official Termux app to run real pkg and shell commands.") }
+    val termCmdState = remember { mutableStateOf("help") }
+    val termOutputState = remember { mutableStateOf("App-owned Android shell ready. Tools listed below are not executable until bundled into a signed APK.") }
 
     val gatewayUrlState = remember { mutableStateOf("") }
     val apiTokenState = remember { mutableStateOf("") }
@@ -130,20 +128,14 @@ fun PyServerMediaApp() {
 
     val workingState = remember { mutableStateOf(false) }
     val loaderTitleState = remember { mutableStateOf("Analyzing media...") }
-    val statusMsgState = remember { mutableStateOf("Install Termux and yt-dlp for site analysis; direct media URLs can be inspected without it") }
+    val statusMsgState = remember { mutableStateOf("App-owned shell enabled; direct media URLs work without a companion app") }
     val logsState = remember { mutableStateOf(listOf<String>()) }
 
     fun appendLog(line: String) {
         logsState.value = (logsState.value + line).takeLast(12)
     }
 
-    fun refreshTermuxStatus() {
-        termuxInstalledState.value = TermuxCommandBridge.isInstalled(context)
-        termuxPermissionState.value = TermuxCommandBridge.hasRunCommandPermission(context)
-    }
-
     LaunchedEffect(Unit) {
-        refreshTermuxStatus()
         val result = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context) }
         result.onSuccess { packagesState.value = it }
             .onFailure { appendLog("Catalog load failed: ${it.message}") }
@@ -172,9 +164,9 @@ fun PyServerMediaApp() {
                 )
                 NavigationBarItem(
                     selected = tabState.value == 1,
-                    onClick = { tabState.value = 1; refreshTermuxStatus() },
+                    onClick = { tabState.value = 1 },
                     icon = { Text(">_", color = if (tabState.value == 1) cyanAccent else Color.Gray) },
-                    label = { Text("PKG Term", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
+                    label = { Text("Terminal", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis) }
                 )
                 NavigationBarItem(
                     selected = tabState.value == 2,
@@ -475,7 +467,7 @@ fun PyServerMediaApp() {
                 }
 
                 1 -> {
-                    // Terminal Runner inside PKG tab
+                    // App-owned shell. Executable payloads require signed APK delivery on target SDK 35.
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
@@ -488,31 +480,28 @@ fun PyServerMediaApp() {
                                 modifier = Modifier.padding(14.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)
                             ) {
-                                Text("Official Termux Companion", color = cyanAccent, fontWeight = FontWeight.Bold)
-                                Text(if (!termuxInstalledState.value) "Install Termux separately to use real pkg and yt-dlp." else if (!termuxPermissionState.value) "Grant PyServer the Termux Run Command permission and enable allow-external-apps in Termux." else "Connected to Termux. Package installs use its official apt repository.", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    OutlinedButton(onClick = { if (termuxInstalledState.value) TermuxCommandBridge.openTermux(context) else context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/termux/termux-app/releases"))) }, modifier = Modifier.weight(1f)) { Text(if (termuxInstalledState.value) "Open Termux" else "Install Termux", color = cyanAccent) }
-                                    OutlinedButton(onClick = { context.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))) }, modifier = Modifier.weight(1f)) { Text("Grant Run permission", color = cyanAccent) }
-                                }
-                                Text("One-time setup: in Android App Info > Permissions > Additional permissions, grant “Run commands in Termux environment” to this app. In Termux set allow-external-apps=true in ~/.termux/termux.properties. Run termux-setup-storage and grant Termux shared-storage access (Android 11+ may require its “manage all files” access). This app itself does not request broad all-files access.", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                Text("App Terminal", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                Text("Runs Android /system/bin/sh under this app's UID—no Termux, no root, and no companion setup. Android system tools and the app's private terminal/home folder are available.", color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                                Text("Python, FFmpeg, aria2, Deno, Node, and yt-dlp are not bundled in this APK yet. On target SDK 35, executable tools must ship inside a signed APK; package entries below are version references only.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
                                 OutlinedTextField(
                                     value = termCmdState.value,
                                     onValueChange = { termCmdState.value = it },
-                                    label = { Text("Termux command (example: pkg install python-yt-dlp)") },
-                                    singleLine = true,
+                                    label = { Text("Shell command (try: help, pwd, ls, toybox)") },
+                                    minLines = 1,
+                                    maxLines = 4,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Button(
                                     onClick = {
                                         workingState.value = true
-                                        loaderTitleState.value = "Running terminal command..."
+                                        loaderTitleState.value = "Running app terminal..."
                                         scope.launch {
                                             val out = withContext(Dispatchers.IO) {
                                                 AssetsAndPackageManager.runTerminalCommand(context, termCmdState.value)
                                             }
                                             workingState.value = false
-                                            termOutputState.value = out
+                                            termOutputState.value = if (out == "\u0000CLEAR") "" else out.takeLast(7000)
                                         }
                                     },
                                     enabled = !workingState.value,
@@ -523,7 +512,7 @@ fun PyServerMediaApp() {
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Execute Command", fontWeight = FontWeight.Bold)
+                                    Text("Run command", fontWeight = FontWeight.Bold)
                                 }
                                 Surface(
                                     color = Color(0xFF05080F),
@@ -542,7 +531,7 @@ fun PyServerMediaApp() {
                         }
                     }
 
-                    // GitHub Manifest Package Manager
+                    // Upstream version catalog. This screen never downloads executable code.
                     item {
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
@@ -558,7 +547,7 @@ fun PyServerMediaApp() {
                                 OutlinedTextField(
                                     value = manifestUrlState.value,
                                     onValueChange = { manifestUrlState.value = it },
-                                    label = { Text("GitHub manifest.json URL") },
+                                    label = { Text("HTTPS runtime catalog URL") },
                                     singleLine = true,
                                     shape = RoundedCornerShape(12.dp),
                                     modifier = Modifier.fillMaxWidth()
@@ -566,7 +555,7 @@ fun PyServerMediaApp() {
                                 Button(
                                     onClick = {
                                         workingState.value = true
-                                        loaderTitleState.value = "Syncing packages..."
+                                        loaderTitleState.value = "Refreshing runtime catalog..."
                                         scope.launch {
                                             val saved = AssetsAndPackageManager.setManifestUrl(context, manifestUrlState.value)
                                             val res = if (saved.isSuccess) withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrlState.value) }
@@ -574,7 +563,7 @@ fun PyServerMediaApp() {
                                             workingState.value = false
                                             res.onSuccess { list ->
                                                 packagesState.value = list
-                                                statusMsgState.value = "${list.size} Termux packages ready; Install/update fetches the latest repository version"
+                                                statusMsgState.value = "${list.size} upstream version references loaded; executables require a signed APK build"
                                             }.onFailure { err ->
                                                 statusMsgState.value = err.message ?: "Manifest error"
                                             }
@@ -588,14 +577,13 @@ fun PyServerMediaApp() {
                                     ),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text("Fetch Manifest")
+                                    Text("Refresh catalog")
                                 }
                             }
                         }
                     }
 
                     items(packagesState.value) { pkg ->
-                        val btnLabel = "Install / update"
                         Card(
                             colors = CardDefaults.cardColors(containerColor = cardDark),
                             shape = RoundedCornerShape(14.dp),
@@ -603,35 +591,23 @@ fun PyServerMediaApp() {
                                 .fillMaxWidth()
                                 .border(1.dp, borderSubtle, RoundedCornerShape(14.dp))
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(12.dp).fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                                     Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text("${pkg.id} • catalog version ${pkg.version}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                    Text("${pkg.id} • upstream ${pkg.version} • ${if (pkg.bundled) "in APK" else "not bundled"}", color = if (pkg.bundled) greenOk else Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
                                     Text(pkg.description, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                                }
                                 Button(
                                     onClick = {
-                                        workingState.value = true
-                                        loaderTitleState.value = "Installing ${pkg.name}..."
-                                        scope.launch {
-                                            val res = withContext(Dispatchers.IO) {
-                                                AssetsAndPackageManager.installPackage(context, pkg)
-                                            }
-                                            workingState.value = false
-                                            refreshTermuxStatus()
-                                            statusMsgState.value = res.getOrElse { it.message ?: "Failed" }
-                                            termOutputState.value = statusMsgState.value
-                                        }
+                                        termOutputState.value = AssetsAndPackageManager.packageUpdateInfo(pkg)
+                                        statusMsgState.value = "APK-only tool delivery; no separate package installer is used"
                                     },
-                                    enabled = !workingState.value,
                                     shape = RoundedCornerShape(10.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black)
+                                    colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                    modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(btnLabel, maxLines = 1, softWrap = false)
+                                    Text(if (pkg.bundled) "APK update required" else "Bundle status", maxLines = 1, softWrap = false)
                                 }
                             }
                         }
