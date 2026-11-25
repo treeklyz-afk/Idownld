@@ -13,6 +13,7 @@ def _simple_info(info):
         "extractor_key": str(info.get("extractor_key") or info.get("extractor") or "yt-dlp")[:100],
         "duration": info.get("duration"),
         "duration_string": str(info.get("duration_string") or "Unknown")[:60],
+        "thumbnail": str(info.get("thumbnail") or "")[:2048],
         "formats": [],
         "entries": [],
     }
@@ -28,6 +29,8 @@ def _simple_info(info):
             "fps": item.get("fps") or 0,
             "filesize": item.get("filesize"),
             "filesize_approx": item.get("filesize_approx"),
+            "abr": item.get("abr") or 0,
+            "url": str(item.get("url") or "")[:4096],
         })
     entries = info.get("entries") or []
     try:
@@ -64,7 +67,7 @@ def analyze(url):
     return json.dumps(_simple_info(info), ensure_ascii=False, separators=(",", ":"))
 
 
-def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False):
+def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False, progress_file_path=""):
     os.makedirs(output_dir, exist_ok=True)
     before = set(os.listdir(output_dir))
     if format_id == "bestaudio":
@@ -73,10 +76,31 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
         # Use a muxed single-file source: this build has the FFmpeg JNI library,
         # but does not expose an ffmpeg executable to yt-dlp post-processors.
         selected_format = "best[vcodec!=none][acodec!=none]"
+    elif re.fullmatch(r"best(480|720|1080|1440|2160)", format_id or ""):
+        height = format_id[4:]
+        selected_format = "best[vcodec!=none][acodec!=none][height<=%s]" % height
     elif re.fullmatch(r"[A-Za-z0-9._+-]{1,80}", format_id or ""):
         selected_format = format_id
     else:
         raise ValueError("Invalid yt-dlp format selection")
+
+    def progress_hook(data):
+        if not progress_file_path:
+            return
+        info = data.get("info_dict") or {}
+        snapshot = {
+            "status": data.get("status", "downloading"),
+            "downloaded": int(data.get("downloaded_bytes") or 0),
+            "total": int(data.get("total_bytes") or data.get("total_bytes_estimate") or 0),
+            "filename": str(info.get("filename") or info.get("title") or "Media")[:240],
+        }
+        temporary = progress_file_path + ".tmp"
+        try:
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump(snapshot, stream, separators=(",", ":"))
+            os.replace(temporary, progress_file_path)
+        except OSError:
+            pass
 
     options = {
         "quiet": True,
@@ -87,6 +111,7 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
         "noplaylist": not playlist_mode,
         "continuedl": True,
         "socket_timeout": 30,
+        "progress_hooks": [progress_hook],
     }
     if playlist_indices_csv:
         indices = [part.strip() for part in playlist_indices_csv.split(",") if part.strip()]

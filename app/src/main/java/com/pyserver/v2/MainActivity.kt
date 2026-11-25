@@ -41,7 +41,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { PyServerMediaApp() }
+        setContent { EnhancedPyServerApp() }
     }
 }
 
@@ -408,8 +408,8 @@ fun PyServerMediaApp() {
                                     loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, fmt.sourceUrl ?: mediaUrlState.value, fmt, false) { appendLog(it) }
-                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), false) { appendLog(it) }
+                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, fmt.sourceUrl ?: mediaUrlState.value, fmt, useAria2 = false, onLog = { appendLog(it) })
+                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), useAria2 = false, onLog = { appendLog(it) })
                                         }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
@@ -434,7 +434,7 @@ fun PyServerMediaApp() {
                                     workingState.value = true
                                     loaderTitleState.value = "Downloading full collection..."
                                     scope.launch {
-                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, null, false) { appendLog(it) } }
+                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, selectedIndices = null, useAria2 = false, onLog = { appendLog(it) }) }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
                                         appendLog(statusMsgState.value)

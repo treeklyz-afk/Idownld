@@ -1,7 +1,7 @@
 {
   "schemaVersion": 2,
-  "catalogVersion": 6,
-  "updatedAtUtc": "2026-11-25T11:10:00Z",
+  "catalogVersion": 7,
+  "updatedAtUtc": "2026-11-25T11:35:00Z",
   "runtime": {
     "applicationId": "com.pyserver.v2",
     "targetSdk": 35,
@@ -208,6 +208,35 @@
       "description": "Not included; no JavaScript challenge runtime is bundled.",
       "bundled": false,
       "license": "MIT"
+    },
+    {
+      "id": "coil-compose",
+      "name": "Coil Compose",
+      "version": "2.7.0",
+      "category": "Images",
+      "description": "Compose image loading for remote media thumbnails; images load only when enabled in settings.",
+      "bundled": true,
+      "license": "Apache-2.0"
+    },
+    {
+      "id": "media3-exoplayer",
+      "name": "AndroidX Media3 ExoPlayer",
+      "version": "1.5.1",
+      "category": "Video playback",
+      "description": "ExoPlayer and PlayerView for user-initiated preview playback and local video history.",
+      "bundled": true,
+      "license": "Apache-2.0"
     }
-  ]
+  ],
+  "appVersion": {
+    "versionCode": 9,
+    "versionName": "2.7.0"
+  },
+  "updateSource": {
+    "provider": "GitHub Releases",
+    "repository": "https://github.com/treeklyz-afk/Idownld",
+    "api": "https://api.github.com/repos/treeklyz-afk/Idownld/releases/latest",
+    "automaticInstall": false,
+    "note": "Checks public releases; APK installation remains a user-controlled Android action."
+  }
 }

@@ -14,7 +14,8 @@ data class FormatChoice(
     val titleLabel: String,
     val mediaType: String,
     val metaInfo: String,
-    val sourceUrl: String? = null
+    val sourceUrl: String? = null,
+    val height: Int = 0
 )
 
 data class MediaEntry(
@@ -29,6 +30,7 @@ data class MediaAnalysis(
     val extractor: String,
     val duration: String,
     val formats: List<FormatChoice>,
+    val thumbnailUrl: String? = null,
     val entries: List<MediaEntry> = emptyList(),
     val entryLimit: Int = 100
 )
@@ -38,7 +40,9 @@ object MediaDownloaderEngine {
 
     fun analyzeUrl(
         context: Context,
-        rawUrl: String
+        rawUrl: String,
+        maxHeight: Int = 1080,
+        onStage: (Int) -> Unit = {}
     ): Result<MediaAnalysis> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL paste karein"))
@@ -49,11 +53,20 @@ object MediaDownloaderEngine {
             return Result.failure(IllegalArgumentException("Only HTTP and HTTPS URLs are supported"))
         }
 
+        onStage(0)
         val direct = nativeAnalyzeFallback(url)
-        if (direct.isSuccess) return direct
+        if (direct.isSuccess) {
+            onStage(3)
+            return direct
+        }
+        onStage(1)
         return try {
-            Result.success(parseYtDlpJson(YtDlpRuntime.analyze(context, url)))
+            onStage(2)
+            val parsed = parseYtDlpJson(YtDlpRuntime.analyze(context, url), maxHeight)
+            onStage(3)
+            Result.success(parsed)
         } catch (e: Exception) {
+            onStage(4)
             jsoupAnalyzeFallback(url).recoverCatching { fallbackError ->
                 throw IllegalStateException("yt-dlp failed (${e.message ?: "extractor error"}); static HTML fallback found no direct media (${fallbackError.message ?: "no video metadata"})")
             }
@@ -88,15 +101,16 @@ object MediaDownloaderEngine {
             title = title.take(240),
             extractor = "Static HTML metadata",
             duration = "Direct source metadata",
-            formats = listOf(FormatChoice("direct", "Direct media source", mediaType, "Found in Open Graph/video HTML metadata; JavaScript pages may not work", mediaUrl))
+            formats = listOf(FormatChoice("direct", "Direct media source", mediaType, "Found in Open Graph/video HTML metadata; JavaScript pages may not work", mediaUrl)),
+            thumbnailUrl = document.selectFirst("meta[property=og:image]")?.absUrl("content")?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
         )
     }
 
-    private fun parseYtDlpJson(raw: String): MediaAnalysis {
+    private fun parseYtDlpJson(raw: String, maxHeight: Int): MediaAnalysis {
         val root = JSONObject(raw.trim())
         val formatsJson = root.optJSONArray("formats")
         val formats = ArrayList<FormatChoice>()
-        formats += FormatChoice("best", "Best single-file video", "video", "Uses a muxed source; this build does not run FFmpeg CLI merges")
+        val videoCandidates = ArrayList<FormatChoice>()
         val seen = mutableSetOf<String>()
         if (formatsJson != null) {
             for (i in 0 until formatsJson.length()) {
@@ -109,22 +123,34 @@ object MediaDownloaderEngine {
                 val fps = item.optInt("fps", 0)
                 val size = item.optLong("filesize", item.optLong("filesize_approx", -1L))
                 val sizeText = if (size > 0L) " • ${size / (1024 * 1024)} MB" else ""
+                val sourceUrl = item.optString("url", "").takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                val abr = item.optInt("abr", 0)
                 val label = when {
                     vcodec != "none" && acodec != "none" -> "${if (height > 0) "${height}p" else "Video"} • $ext${if (fps > 0) " • ${fps}fps" else ""}$sizeText"
+                    vcodec == "none" && acodec != "none" -> "Audio • $ext${if (abr > 0) " • ${abr} kbps" else ""}$sizeText"
                     else -> continue
                 }
                 if (seen.add("$label|$id")) {
-                    val isCombined = acodec != "none"
-                    formats += FormatChoice(
-                        id,
-                        label,
-                        "video",
-                        if (isCombined) "Video and audio stream $id" else "Video stream $id"
+                    val choice = FormatChoice(
+                        id, label, if (vcodec == "none") "audio" else "video",
+                        if (vcodec == "none") "Audio format $id" else "Muxed video and audio • $id",
+                        sourceUrl, height
                     )
+                    if (vcodec == "none") formats += choice else videoCandidates += choice
                 }
             }
         }
-        formats += FormatChoice("bestaudio", "Audio only (original format)", "audio", "No conversion; preserves the source codec")
+        val cap = maxHeight.coerceIn(480, 2160)
+        val bestPreview = videoCandidates.filter { it.height == 0 || it.height <= cap }.maxByOrNull { it.height }
+            ?: videoCandidates.maxByOrNull { it.height }
+        formats += FormatChoice(
+            "best$cap", "Best single-file video • up to ${cap}p", "video",
+            "Muxed video/audio; no FFmpeg CLI merge required", bestPreview?.sourceUrl, bestPreview?.height ?: 0
+        )
+        formats += videoCandidates.sortedByDescending { it.height }
+        if (formats.none { it.mediaType == "audio" }) {
+            formats += FormatChoice("bestaudio", "Audio only (original format)", "audio", "No conversion; preserves the source codec")
+        }
 
         val entries = ArrayList<MediaEntry>()
         val entriesJson = root.optJSONArray("entries")
@@ -148,6 +174,7 @@ object MediaDownloaderEngine {
             extractor = root.optString("extractor_key", "yt-dlp"),
             duration = duration,
             formats = formats,
+            thumbnailUrl = root.optString("thumbnail", "").takeIf { it.startsWith("http://") || it.startsWith("https://") },
             entries = entries
         )
     }
@@ -196,7 +223,7 @@ object MediaDownloaderEngine {
                     title = title,
                     extractor = "Direct file",
                     duration = "Original stream",
-                    formats = listOf(FormatChoice("direct", label, mediaType, "No re-encoding"))
+                    formats = listOf(FormatChoice("direct", label, mediaType, "No re-encoding", finalUrl))
                 )
             )
         } catch (e: Exception) {
@@ -209,14 +236,15 @@ object MediaDownloaderEngine {
         rawUrl: String,
         choice: FormatChoice,
         useAria2: Boolean = false,
-        onLog: (String) -> Unit = {}
+        onLog: (String) -> Unit = {},
+        onProgress: (DownloadProgress) -> Unit = {}
     ): Result<String> {
         val url = rawUrl.trim()
         if (url.isEmpty()) return Result.failure(IllegalArgumentException("URL empty"))
-        if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog)
+        if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog, onProgress)
         return try {
             onLog("Downloading with APK-bundled yt-dlp...")
-            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId), choice.mediaType)
+            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId, onProgress = onProgress), choice.mediaType)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("yt-dlp download failed: ${e.message ?: "unknown error"}"))
         }
@@ -229,7 +257,8 @@ object MediaDownloaderEngine {
         choice: FormatChoice,
         selectedIndices: List<Int>? = null,
         useAria2: Boolean = false,
-        onLog: (String) -> Unit = {}
+        onLog: (String) -> Unit = {},
+        onProgress: (DownloadProgress) -> Unit = {}
     ): Result<String> {
         if (selectedIndices != null && selectedIndices.isEmpty()) {
             return Result.failure(IllegalArgumentException("Select at least one playlist item"))
@@ -241,7 +270,7 @@ object MediaDownloaderEngine {
             onLog("Downloading collection with APK-bundled yt-dlp...")
             publishYtDlpFiles(
                 context,
-                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true),
+                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true, onProgress = onProgress),
                 choice.mediaType
             )
         } catch (e: Exception) {
@@ -268,7 +297,8 @@ object MediaDownloaderEngine {
         context: Context,
         url: String,
         choice: FormatChoice,
-        onLog: (String) -> Unit
+        onLog: (String) -> Unit,
+        onProgress: (DownloadProgress) -> Unit
     ): Result<String> {
         if (choice.formatId != "direct") return Result.failure(IllegalArgumentException("Only verified direct media URLs use the built-in downloader"))
         return try {
@@ -285,6 +315,7 @@ object MediaDownloaderEngine {
             val code = conn.responseCode
             val contentType = (conn.contentType ?: "").substringBefore(';').trim().lowercase()
             val finalUrl = conn.url.toString()
+            val contentLength = conn.contentLengthLong
             if (code !in 200..299) {
                 conn.disconnect()
                 return Result.failure(IllegalStateException("Source returned HTTP $code"))
@@ -317,22 +348,28 @@ object MediaDownloaderEngine {
             val stageDir = MediaStoreDownloads.stagingDirectory(context)
             val staged = File(stageDir, "$base.$ext")
             val temp = File(stageDir, "$base.$ext.part")
+            onProgress(DownloadProgress(0L, contentLength, staged.name, "downloading"))
             conn.inputStream.use { input ->
                 FileOutputStream(temp).use { output ->
                     val buffer = ByteArray(16384)
                     var total = 0L
+                    var lastReported = 0L
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         total += count
                         if (total > 2L * 1024 * 1024 * 1024) throw IllegalStateException("File exceeds the 2 GiB safety limit")
                         output.write(buffer, 0, count)
+                        if (total - lastReported >= 256L * 1024L || (contentLength > 0L && total >= contentLength)) {
+                            onProgress(DownloadProgress(total, contentLength, staged.name, "downloading"))
+                            lastReported = total
+                        }
                     }
                     output.flush()
-                    onLog("Downloaded ${total / 1024} KB")
                 }
             }
             conn.disconnect()
+            onProgress(DownloadProgress(temp.length(), contentLength, staged.name, "saving"))
             if (staged.exists()) staged.delete()
             if (!temp.renameTo(staged)) {
                 temp.copyTo(staged, overwrite = true)

@@ -65,3 +65,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ## Feature limitations in this build
 The yt-dlp-ejs scripts are bundled, but no compatible QuickJS/Deno/Node runtime is included yet. YouTube EJS challenge solving is therefore not guaranteed. The FFmpeg AAR exposes JNI APIs; this app does not provide yt-dlp with an ffmpeg executable, so video downloads are restricted to muxed single-file formats and audio-only streams. x264/x265 encoders are not included in this LGPL build; FDK-AAC remains excluded pending licensing and patent review. Site extraction availability depends on the site, extractor, access controls, authentication, and current site behavior.
+
+## Media3 ExoPlayer 1.5.1 and Coil Compose 2.7.0
+The app packages AndroidX Media3 ExoPlayer/Media3 UI and Coil Compose under Apache License 2.0. The full Apache-2.0 license text is included in `app/src/main/assets/third_party_licenses/Apache-2.0.txt` and in the APK. Upstream projects: https://github.com/androidx/media and https://github.com/coil-kt/coil . Media3 is used for user-initiated stream/history playback; Coil displays remote thumbnails when the user preference is enabled. These libraries do not remove source-site access restrictions.

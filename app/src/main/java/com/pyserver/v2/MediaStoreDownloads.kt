@@ -2,6 +2,7 @@ package com.pyserver.v2
 
 import android.content.ContentValues
 import android.content.Context
+import android.content.ContentUris
 import android.media.MediaScannerConnection
 import android.net.Uri
 import android.os.Build
@@ -10,9 +11,56 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import java.io.File
 
+data class DownloadHistoryItem(
+    val uri: Uri,
+    val displayName: String,
+    val sizeBytes: Long,
+    val dateAddedSeconds: Long,
+    val mediaType: String
+)
+
 object MediaStoreDownloads {
     fun stagingDirectory(context: Context): File =
         File(context.cacheDir, "PyServer2/staging").apply { mkdirs() }
+
+    /** Returns this app's own published files; Android 10+ scopes access to app-created MediaStore items. */
+    fun queryHistory(context: Context): List<DownloadHistoryItem> {
+        val resolver = context.contentResolver
+        val result = ArrayList<DownloadHistoryItem>()
+        fun query(collection: Uri, folder: String, type: String) {
+            val projection = arrayOf(
+                MediaStore.MediaColumns._ID,
+                MediaStore.MediaColumns.DISPLAY_NAME,
+                MediaStore.MediaColumns.SIZE,
+                MediaStore.MediaColumns.DATE_ADDED
+            )
+            resolver.query(
+                collection,
+                projection,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?",
+                arrayOf("$folder/%"),
+                "${MediaStore.MediaColumns.DATE_ADDED} DESC"
+            )?.use { cursor ->
+                val idCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns._ID)
+                val nameCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DISPLAY_NAME)
+                val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.SIZE)
+                val dateCol = cursor.getColumnIndexOrThrow(MediaStore.MediaColumns.DATE_ADDED)
+                while (cursor.moveToNext()) {
+                    val id = cursor.getLong(idCol)
+                    result += DownloadHistoryItem(
+                        uri = ContentUris.withAppendedId(collection, id),
+                        displayName = cursor.getString(nameCol) ?: "Media download",
+                        sizeBytes = cursor.getLong(sizeCol),
+                        dateAddedSeconds = cursor.getLong(dateCol),
+                        mediaType = type
+                    )
+                }
+            }
+        }
+        query(MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "${Environment.DIRECTORY_MOVIES}/PyServer2/Video", "video")
+        query(MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY), "${Environment.DIRECTORY_MUSIC}/PyServer2/Audio", "audio")
+        return result.sortedByDescending { it.dateAddedSeconds }
+    }
 
     /** Publishes a finished staged file to Android's media library on Android 10+. */
     fun publish(context: Context, stagedFile: File, mediaType: String): Result<String> {
