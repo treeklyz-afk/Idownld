@@ -1,0 +1,1185 @@
+name: Build PyServer 2.0 Jetpack Compose APK
+
+on:
+  push:
+    branches: [ "main" ]
+    paths-ignore:
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  scaffold-push-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Scaffold complete Jetpack Compose project sources
+        run: |
+          mkdir -p app/src/main/java/com/pyserver/v2
+          mkdir -p app/src/main/assets/tools
+          mkdir -p app/src/main/assets/packages
+          mkdir -p app/src/main/assets/scripts
+
+          cat <<'EOF' > settings.gradle.kts
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "PyServer2Studio"
+          include(":app")
+          EOF
+
+          cat <<'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2560m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          kotlin.code.style=official
+          EOF
+
+          cat <<'EOF' > build.gradle.kts
+          plugins {
+              id("com.android.application") version "8.7.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.21" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.21" apply false
+          }
+          EOF
+
+          cat <<'EOF' > app/build.gradle.kts
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+
+          android {
+              namespace = "com.pyserver.v2"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.pyserver.v2"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 2
+                  versionName = "2.0.0"
+              }
+
+              buildFeatures {
+                  compose = true
+              }
+
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+
+              kotlinOptions {
+                  jvmTarget = "17"
+              }
+          }
+
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.activity:activity-compose:1.9.3")
+              implementation(platform("androidx.compose:compose-bom:2024.11.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-graphics")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-extended")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+          }
+          EOF
+
+          cat <<'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+              <application
+                  android:allowBackup="true"
+                  android:label="PyServer 2.0 Studio"
+                  android:usesCleartextTraffic="true"
+                  android:supportsRtl="true"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize|screenLayout">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".BackgroundEngineService"
+                      android:exported="false"
+                      android:foregroundServiceType="dataSync" />
+              </application>
+
+          </manifest>
+          EOF
+
+          cat <<'EOF' > app/src/main/assets/scripts/engine_bridge.py
+          import sys
+          import json
+          import subprocess
+
+          def main():
+              if len(sys.argv) < 3:
+                  print(json.dumps({"ok": False, "error": "Usage: engine_bridge.py <ytdlp_bin> <url>"}))
+                  sys.exit(1)
+
+              ytdlp_bin = sys.argv[1]
+              url = sys.argv[2]
+
+              try:
+                  proc = subprocess.run(
+                      [ytdlp_bin, "-J", "--no-playlist", url],
+                      capture_output=True,
+                      text=True,
+                      timeout=45
+                  )
+                  if proc.returncode != 0:
+                      print(json.dumps({"ok": False, "error": proc.stderr.strip() or "yt-dlp failed"}))
+                      sys.exit(2)
+
+                  data = json.loads(proc.stdout)
+                  formats = []
+                  seen = set()
+                  for f in data.get("formats", []):
+                      vcodec = f.get("vcodec", "none")
+                      height = f.get("height")
+                      fmt_id = f.get("format_id")
+                      ext = f.get("ext", "mp4")
+                      if vcodec != "none" and height and fmt_id:
+                          label = f"{height}p ({ext.upper()})"
+                          if label not in seen:
+                              seen.add(label)
+                              formats.append({
+                                  "format_id": str(fmt_id),
+                                  "label": label,
+                                  "media_type": "video"
+                              })
+
+                  formats.sort(key=lambda x: int(x["label"].split("p")[0]) if x["label"].split("p")[0].isdigit() else 0, reverse=True)
+                  formats.append({"format_id": "bestaudio", "label": "Audio Only (MP3)", "media_type": "audio"})
+
+                  print(json.dumps({
+                      "ok": True,
+                      "title": data.get("title", "Media"),
+                      "extractor": data.get("extractor_key", "PythonBridge"),
+                      "duration": data.get("duration_string", "N/A"),
+                      "formats": formats
+                  }))
+              except Exception as e:
+                  print(json.dumps({"ok": False, "error": str(e)}))
+                  sys.exit(3)
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+          cat <<'EOF' > app/src/main/java/com/pyserver/v2/PythonRunner.kt
+          package com.pyserver.v2
+
+          import android.content.Context
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.BufferedReader
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.io.InputStreamReader
+
+          object PythonRunner {
+              fun scriptsDir(context: Context): File = File(context.filesDir, "scripts").apply { mkdirs() }
+
+              fun extractPythonScripts(context: Context) {
+                  val dir = scriptsDir(context)
+                  try {
+                      val files = context.assets.list("scripts") ?: emptyArray()
+                      for (name in files) {
+                          val outFile = File(dir, name)
+                          context.assets.open("scripts/$name").use { input ->
+                              FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                          }
+                          outFile.setReadable(true, false)
+                      }
+                  } catch (_: Exception) {
+                  }
+              }
+
+              fun findPythonExecutable(context: Context): String? {
+                  val candidates = listOf(
+                      File(context.filesDir, "bin/python3"),
+                      File(context.filesDir, "packages/python3"),
+                      File("/data/data/com.termux/files/usr/bin/python3"),
+                      File("/system/bin/python3")
+                  )
+                  for (c in candidates) {
+                      if (c.exists() && c.canExecute()) return c.absolutePath
+                  }
+                  return null
+              }
+
+              fun analyzeWithPythonBridge(context: Context, url: String): Result<MediaAnalysis> {
+                  val pyBin = findPythonExecutable(context)
+                      ?: return Result.failure(Exception("Python runtime not found"))
+                  val scriptFile = File(scriptsDir(context), "engine_bridge.py")
+                  if (!scriptFile.exists()) return Result.failure(Exception("engine_bridge.py missing"))
+                  val ytdlpBin = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
+
+                  return try {
+                      val proc = ProcessBuilder(pyBin, scriptFile.absolutePath, ytdlpBin, url)
+                          .redirectErrorStream(false)
+                          .start()
+                      val stdout = BufferedReader(InputStreamReader(proc.inputStream)).readText()
+                      val stderr = BufferedReader(InputStreamReader(proc.errorStream)).readText()
+                      val code = proc.waitFor()
+                      if (stdout.isBlank()) return Result.failure(Exception(stderr.ifBlank { "Exit $code" }))
+
+                      val root = JSONObject(stdout)
+                      if (!root.optBoolean("ok", false)) {
+                          return Result.failure(Exception(root.optString("error", "Bridge error")))
+                      }
+                      val arr: JSONArray = root.optJSONArray("formats") ?: JSONArray()
+                      val formats = mutableListOf<FormatChoice>()
+                      for (i in 0 until arr.length()) {
+                          val item = arr.getJSONObject(i)
+                          formats.add(
+                              FormatChoice(
+                                  formatId = item.optString("format_id", "best"),
+                                  titleLabel = item.optString("label", "Format"),
+                                  mediaType = item.optString("media_type", "video"),
+                                  metaInfo = "Python Bridge"
+                              )
+                          )
+                      }
+                      Result.success(
+                          MediaAnalysis(
+                              title = root.optString("title", "Media"),
+                              extractor = root.optString("extractor", "PythonBridge"),
+                              duration = root.optString("duration", "N/A"),
+                              formats = formats
+                          )
+                      )
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+          }
+          EOF
+
+          cat <<'EOF' > app/src/main/java/com/pyserver/v2/AssetsAndPackageManager.kt
+          package com.pyserver.v2
+
+          import android.content.Context
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.net.HttpURLConnection
+          import java.net.URL
+
+          data class ManifestPackage(
+              val id: String,
+              val name: String,
+              val version: String,
+              val category: String,
+              val filename: String,
+              val url: String
+          )
+
+          data class ToolStatus(
+              val name: String,
+              val installed: Boolean,
+              val version: String?,
+              val path: String
+          )
+
+          object AssetsAndPackageManager {
+              private const val PREFS = "pyserver2_prefs"
+              private const val KEY_MANIFEST = "manifest_url"
+              private const val DEFAULT_MANIFEST =
+                  "https://raw.githubusercontent.com/YOUR_USER/pyserver-assets/main/manifest.json"
+
+              fun binDir(context: Context): File = File(context.filesDir, "bin").apply { mkdirs() }
+              fun pkgDir(context: Context): File = File(context.filesDir, "packages").apply { mkdirs() }
+
+              fun getManifestUrl(context: Context): String =
+                  context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                      .getString(KEY_MANIFEST, DEFAULT_MANIFEST) ?: DEFAULT_MANIFEST
+
+              fun setManifestUrl(context: Context, url: String) {
+                  context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                      .edit().putString(KEY_MANIFEST, url.trim()).apply()
+              }
+
+              fun getInstalledVersion(context: Context, id: String): String? =
+                  context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                      .getString("pkg_ver_$id", null)
+
+              private fun setInstalledVersion(context: Context, id: String, version: String) {
+                  context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                      .edit().putString("pkg_ver_$id", version).apply()
+              }
+
+              fun extractAssetsOnStartup(context: Context, onLog: (String) -> Unit = {}) {
+                  PythonRunner.extractPythonScripts(context)
+                  val assetFolders = listOf("tools" to binDir(context), "packages" to pkgDir(context))
+                  for ((folder, targetRoot) in assetFolders) {
+                      try {
+                          val files = context.assets.list(folder) ?: emptyArray()
+                          for (name in files) {
+                              val outFile = File(targetRoot, name)
+                              context.assets.open("$folder/$name").use { input ->
+                                  FileOutputStream(outFile).use { output -> input.copyTo(output) }
+                              }
+                              outFile.setReadable(true, false)
+                              outFile.setExecutable(true, false)
+                              onLog("Loaded asset: $folder/$name")
+                          }
+                      } catch (_: Exception) {
+                      }
+                  }
+              }
+
+              fun resolveTool(context: Context, name: String): String {
+                  val candidates = listOf(
+                      File(binDir(context), name),
+                      File(pkgDir(context), name),
+                      File(context.applicationInfo.nativeLibraryDir, "lib$name.so")
+                  )
+                  for (f in candidates) {
+                      if (f.exists()) {
+                          f.setReadable(true, false)
+                          f.setExecutable(true, false)
+                          if (f.canExecute()) return f.absolutePath
+                      }
+                  }
+                  return name
+              }
+
+              fun getCoreToolsStatus(context: Context): List<ToolStatus> {
+                  val core = listOf("yt-dlp", "ffmpeg", "ffprobe", "aria2c", "python3")
+                  return core.map { tool ->
+                      val resolved = if (tool == "python3") {
+                          PythonRunner.findPythonExecutable(context) ?: "python3"
+                      } else {
+                          resolveTool(context, tool)
+                      }
+                      val file = File(resolved)
+                      val exists = file.exists() && file.canExecute()
+                      ToolStatus(
+                          name = tool,
+                          installed = exists,
+                          version = getInstalledVersion(context, tool) ?: if (exists) "Ready" else null,
+                          path = resolved
+                      )
+                  }
+              }
+
+              fun fetchManifest(context: Context, urlOverride: String? = null): Result<List<ManifestPackage>> {
+                  return try {
+                      val target = urlOverride?.trim()?.ifEmpty { null } ?: getManifestUrl(context)
+                      val conn = (URL(target).openConnection() as HttpURLConnection).apply {
+                          requestMethod = "GET"
+                          instanceFollowRedirects = true
+                          connectTimeout = 15000
+                          readTimeout = 15000
+                      }
+                      if (conn.responseCode !in 200..299) {
+                          return Result.failure(Exception("HTTP ${conn.responseCode}"))
+                      }
+                      val body = conn.inputStream.bufferedReader().readText()
+                      conn.disconnect()
+                      val root = JSONObject(body)
+                      val arr: JSONArray = root.optJSONArray("packages") ?: JSONArray()
+                      val items = mutableListOf<ManifestPackage>()
+                      for (i in 0 until arr.length()) {
+                          val o = arr.getJSONObject(i)
+                          items.add(
+                              ManifestPackage(
+                                  id = o.getString("id"),
+                                  name = o.optString("name", o.getString("id")),
+                                  version = o.optString("version", "1.0.0"),
+                                  category = o.optString("category", "package"),
+                                  filename = o.optString("filename", o.getString("id")),
+                                  url = o.getString("url")
+                              )
+                          )
+                      }
+                      Result.success(items)
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+
+              fun installPackage(context: Context, pkg: ManifestPackage, onProgress: (String) -> Unit = {}): Result<String> {
+                  return try {
+                      val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
+                      val dest = File(targetDir, pkg.filename)
+                      val temp = File(targetDir, "${pkg.filename}.download")
+                      onProgress("Downloading ${pkg.name} v${pkg.version}...")
+                      val conn = (URL(pkg.url).openConnection() as HttpURLConnection).apply {
+                          requestMethod = "GET"
+                          instanceFollowRedirects = true
+                          connectTimeout = 20000
+                          readTimeout = 60000
+                      }
+                      if (conn.responseCode !in 200..299) {
+                          return Result.failure(Exception("HTTP ${conn.responseCode}"))
+                      }
+                      conn.inputStream.use { input ->
+                          FileOutputStream(temp).use { output ->
+                              val buf = ByteArray(16384)
+                              while (true) {
+                                  val n = input.read(buf)
+                                  if (n == -1) break
+                                  output.write(buf, 0, n)
+                              }
+                              output.flush()
+                          }
+                      }
+                      conn.disconnect()
+                      if (dest.exists()) dest.delete()
+                      if (!temp.renameTo(dest)) {
+                          temp.copyTo(dest, overwrite = true)
+                          temp.delete()
+                      }
+                      dest.setReadable(true, false)
+                      dest.setExecutable(true, false)
+                      setInstalledVersion(context, pkg.id, pkg.version)
+                      Result.success("Installed ${pkg.name} (v${pkg.version})")
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+
+              fun removePackage(context: Context, pkg: ManifestPackage): Result<String> {
+                  return try {
+                      val targetDir = if (pkg.category == "package") pkgDir(context) else binDir(context)
+                      val dest = File(targetDir, pkg.filename)
+                      if (dest.exists()) dest.delete()
+                      context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove("pkg_ver_${pkg.id}").apply()
+                      Result.success("Removed ${pkg.name}")
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+          }
+          EOF
+
+          cat <<'EOF' > app/src/main/java/com/pyserver/v2/MediaDownloaderEngine.kt
+          package com.pyserver.v2
+
+          import android.content.Context
+          import org.json.JSONArray
+          import org.json.JSONObject
+          import java.io.BufferedReader
+          import java.io.File
+          import java.io.FileOutputStream
+          import java.io.InputStreamReader
+          import java.net.HttpURLConnection
+          import java.net.URL
+
+          data class FormatChoice(
+              val formatId: String,
+              val titleLabel: String,
+              val mediaType: String,
+              val metaInfo: String
+          )
+
+          data class MediaAnalysis(
+              val title: String,
+              val extractor: String,
+              val duration: String,
+              val formats: List<FormatChoice>
+          )
+
+          object MediaDownloaderEngine {
+              fun outputDirectory(context: Context): File =
+                  File(context.getExternalFilesDir(null), "PyServer2_Media").apply { mkdirs() }
+
+              fun analyzeUrl(context: Context, rawUrl: String, preferPythonBridge: Boolean = true): Result<MediaAnalysis> {
+                  val url = rawUrl.trim()
+                  if (url.isEmpty()) return Result.failure(Exception("URL empty"))
+
+                  if (preferPythonBridge) {
+                      val pyResult = PythonRunner.analyzeWithPythonBridge(context, url)
+                      if (pyResult.isSuccess) return pyResult
+                  }
+
+                  val ytdlp = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
+                  val ytdlpFile = File(ytdlp)
+                  if (!ytdlpFile.exists() || !ytdlpFile.canExecute()) {
+                      val name = url.substringAfterLast("/").substringBefore("?").ifBlank { "media.mp4" }
+                      return Result.success(
+                          MediaAnalysis(
+                              title = name,
+                              extractor = "DirectFallback",
+                              duration = "N/A",
+                              formats = listOf(
+                                  FormatChoice("direct", "Direct File Download", "video", "Direct stream"),
+                                  FormatChoice("bestaudio", "Audio Only (MP3)", "audio", "Requires FFmpeg")
+                              )
+                          )
+                      )
+                  }
+
+                  return try {
+                      val proc = ProcessBuilder(ytdlp, "-J", "--no-playlist", url)
+                          .redirectErrorStream(false)
+                          .start()
+                      val out = BufferedReader(InputStreamReader(proc.inputStream)).readText()
+                      val err = BufferedReader(InputStreamReader(proc.errorStream)).readText()
+                      val code = proc.waitFor()
+                      if (code != 0 || out.isBlank()) {
+                          return Result.failure(Exception(err.ifBlank { "Exit $code" }))
+                      }
+                      val root = JSONObject(out)
+                      val arr: JSONArray = root.optJSONArray("formats") ?: JSONArray()
+                      val formats = mutableListOf(
+                          FormatChoice("best", "Best Quality • Auto Merge", "video", "Highest video + best audio")
+                      )
+                      val seen = mutableSetOf<String>()
+                      for (i in 0 until arr.length()) {
+                          val item = arr.getJSONObject(i)
+                          val vcodec = item.optString("vcodec", "none")
+                          val height = item.optInt("height", 0)
+                          val ext = item.optString("ext", "mp4")
+                          val fmtId = item.optString("format_id", "")
+                          if (vcodec != "none" && height > 0 && fmtId.isNotEmpty()) {
+                              val label = "${height}p • ${ext.uppercase()}"
+                              if (seen.add(label)) {
+                                  formats.add(FormatChoice(fmtId, label, "video", "Codec: $vcodec"))
+                              }
+                          }
+                      }
+                      formats.add(FormatChoice("bestaudio", "Audio Only • MP3", "audio", "Extracted via FFmpeg"))
+                      Result.success(
+                          MediaAnalysis(
+                              title = root.optString("title", "Media Stream"),
+                              extractor = root.optString("extractor_key", "Generic"),
+                              duration = root.optString("duration_string", "N/A"),
+                              formats = formats
+                          )
+                      )
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+
+              fun downloadMedia(
+                  context: Context,
+                  rawUrl: String,
+                  choice: FormatChoice,
+                  useAria2: Boolean = true,
+                  onLog: (String) -> Unit = {}
+              ): Result<String> {
+                  val url = rawUrl.trim()
+                  val outDir = outputDirectory(context)
+                  val ytdlp = AssetsAndPackageManager.resolveTool(context, "yt-dlp")
+                  val ffmpeg = AssetsAndPackageManager.resolveTool(context, "ffmpeg")
+                  val aria2 = AssetsAndPackageManager.resolveTool(context, "aria2c")
+
+                  if (choice.formatId == "direct" || !File(ytdlp).exists() || !File(ytdlp).canExecute()) {
+                      return directHttpDownload(url, outDir, onLog)
+                  }
+
+                  return try {
+                      val outTemplate = File(outDir, "%(title).75s [%(id)s].%(ext)s").absolutePath
+                      val cmd = mutableListOf(ytdlp, "--no-playlist", "-o", outTemplate)
+                      if (File(ffmpeg).exists() && File(ffmpeg).canExecute()) {
+                          cmd.addAll(listOf("--ffmpeg-location", ffmpeg))
+                      }
+                      if (useAria2 && File(aria2).exists() && File(aria2).canExecute()) {
+                          cmd.addAll(listOf("--downloader", aria2, "--downloader-args", "aria2c:-x 8 -s 8 -k 1M"))
+                          onLog("Using aria2c")
+                      }
+                      when {
+                          choice.mediaType == "audio" -> cmd.addAll(listOf("-f", "bestaudio/best", "-x", "--audio-format", "mp3"))
+                          choice.formatId == "best" -> cmd.addAll(listOf("-f", "bv*+ba/b", "--merge-output-format", "mp4"))
+                          else -> cmd.addAll(listOf("-f", "${choice.formatId}+bestaudio/best", "--merge-output-format", "mp4"))
+                      }
+                      cmd.add(url)
+                      val proc = ProcessBuilder(cmd).redirectErrorStream(true).start()
+                      val tail = StringBuilder()
+                      proc.inputStream.bufferedReader().forEachLine { line ->
+                          onLog(line)
+                          if (tail.length > 2000) tail.delete(0, tail.length - 1200)
+                          tail.append(line).append("\n")
+                      }
+                      val code = proc.waitFor()
+                      if (code == 0) Result.success("Saved in ${outDir.absolutePath}")
+                      else Result.failure(Exception("Exit $code: ${tail.toString().takeLast(240)}"))
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+
+              private fun directHttpDownload(url: String, outDir: File, onLog: (String) -> Unit): Result<String> {
+                  return try {
+                      val name = url.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}.mp4" }
+                      val dest = File(outDir, name)
+                      onLog("Direct download -> $name")
+                      val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                          requestMethod = "GET"
+                          instanceFollowRedirects = true
+                          connectTimeout = 20000
+                          readTimeout = 60000
+                      }
+                      if (conn.responseCode !in 200..299) return Result.failure(Exception("HTTP ${conn.responseCode}"))
+                      conn.inputStream.use { input ->
+                          FileOutputStream(dest).use { output ->
+                              val buf = ByteArray(16384)
+                              while (true) {
+                                  val r = input.read(buf)
+                                  if (r == -1) break
+                                  output.write(buf, 0, r)
+                              }
+                              output.flush()
+                          }
+                      }
+                      conn.disconnect()
+                      Result.success("Saved to ${dest.absolutePath}")
+                  } catch (e: Exception) {
+                      Result.failure(e)
+                  }
+              }
+          }
+          EOF
+
+          cat <<'EOF' > app/src/main/java/com/pyserver/v2/BackgroundEngineService.kt
+          package com.pyserver.v2
+
+          import android.app.Notification
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.Service
+          import android.content.Intent
+          import android.os.Build
+          import android.os.IBinder
+          import androidx.core.app.NotificationCompat
+          import kotlinx.coroutines.CoroutineScope
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.SupervisorJob
+          import kotlinx.coroutines.cancel
+          import kotlinx.coroutines.delay
+          import kotlinx.coroutines.isActive
+          import kotlinx.coroutines.launch
+          import org.json.JSONObject
+          import java.net.HttpURLConnection
+          import java.net.URL
+
+          class BackgroundEngineService : Service() {
+              private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+              private var gatewayUrl = ""
+              private var token = ""
+
+              override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                  gatewayUrl = intent?.getStringExtra("gateway_url")?.trim()?.trimEnd('/') ?: ""
+                  token = intent?.getStringExtra("token")?.trim() ?: ""
+                  createChannel()
+                  val notif: Notification = NotificationCompat.Builder(this, "pyserver2_channel")
+                      .setContentTitle("PyServer 2.0 Engine Running")
+                      .setContentText("Background service & Render token bridge active")
+                      .setSmallIcon(android.R.drawable.stat_sys_download)
+                      .setOngoing(true)
+                      .build()
+                  startForeground(303, notif)
+                  scope.launch {
+                      while (isActive) {
+                          if (gatewayUrl.isNotEmpty() && token.isNotEmpty()) pollGateway()
+                          delay(4000)
+                      }
+                  }
+                  return START_STICKY
+              }
+
+              private fun pollGateway() {
+                  try {
+                      val conn = (URL("$gatewayUrl/api/bridge/next-job").openConnection() as HttpURLConnection).apply {
+                          requestMethod = "GET"
+                          setRequestProperty("Authorization", "Bearer $token")
+                          connectTimeout = 6000
+                          readTimeout = 6000
+                      }
+                      if (conn.responseCode == 200) {
+                          val obj = JSONObject(conn.inputStream.bufferedReader().readText())
+                          if (obj.optBoolean("has_job", false)) {
+                              val jobId = obj.getString("job_id")
+                              val url = obj.getString("url")
+                              val fmtId = obj.optString("format_id", "best")
+                              val type = obj.optString("media_type", "video")
+                              val res = MediaDownloaderEngine.downloadMedia(this, url, FormatChoice(fmtId, fmtId, type, "Token Job"))
+                              sendCompletion(jobId, res.isSuccess, res.getOrElse { it.message ?: "Error" })
+                          }
+                      }
+                      conn.disconnect()
+                  } catch (_: Exception) {
+                  }
+              }
+
+              private fun sendCompletion(jobId: String, ok: Boolean, detail: String) {
+                  try {
+                      val conn = (URL("$gatewayUrl/api/bridge/complete").openConnection() as HttpURLConnection).apply {
+                          requestMethod = "POST"
+                          setRequestProperty("Authorization", "Bearer $token")
+                          setRequestProperty("Content-Type", "application/json")
+                          doOutput = true
+                      }
+                      val payload = JSONObject().apply {
+                          put("job_id", jobId)
+                          put("success", ok)
+                          put("detail", detail)
+                      }.toString()
+                      conn.outputStream.use { it.write(payload.toByteArray()) }
+                      conn.responseCode
+                      conn.disconnect()
+                  } catch (_: Exception) {
+                  }
+              }
+
+              private fun createChannel() {
+                  if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                      val mgr = getSystemService(NotificationManager::class.java)
+                      val ch = NotificationChannel("pyserver2_channel", "PyServer 2.0 Service", NotificationManager.IMPORTANCE_LOW)
+                      mgr.createNotificationChannel(ch)
+                  }
+              }
+
+              override fun onDestroy() {
+                  scope.cancel()
+                  super.onDestroy()
+              }
+
+              override fun onBind(intent: Intent?): IBinder? = null
+          }
+          EOF
+
+          cat <<'EOF' > app/src/main/java/com/pyserver/v2/MainActivity.kt
+          package com.pyserver.v2
+
+          import android.content.Intent
+          import android.net.Uri
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.filled.CloudDownload
+          import androidx.compose.material.icons.filled.Extension
+          import androidx.compose.material.icons.filled.Key
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalClipboardManager
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontFamily
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.unit.dp
+          import androidx.core.content.ContextCompat
+          import kotlinx.coroutines.Dispatchers
+          import kotlinx.coroutines.launch
+          import kotlinx.coroutines.withContext
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent { PyServerStudioApp() }
+              }
+          }
+
+          @Composable
+          fun PyServerStudioApp() {
+              val context = LocalContext.current
+              val clipboard = LocalClipboardManager.current
+              val scope = rememberCoroutineScope()
+
+              var tab by remember { mutableStateOf(0) }
+              var mediaUrl by remember { mutableStateOf("") }
+              var useAria2 by remember { mutableStateOf(true) }
+              var usePyBridge by remember { mutableStateOf(true) }
+              var analysis by remember { mutableStateOf<MediaAnalysis?>(null) }
+              var selectedFormat by remember { mutableStateOf<FormatChoice?>(null) }
+
+              var manifestUrl by remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
+              var packages by remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
+              var versionMap by remember { mutableStateOf>(emptyMap()) }
+              var toolStatuses by remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
+
+              var gatewayUrl by remember { mutableStateOf("https://your-gateway.onrender.com") }
+              var apiToken by remember { mutableStateOf("") }
+              var bgActive by remember { mutableStateOf(false) }
+
+              var working by remember { mutableStateOf(false) }
+              var statusMsg by remember { mutableStateOf("Initializing...") }
+              var logs by remember { mutableStateOf(listOf<String>()) }
+
+              fun appendLog(msg: String) {
+                  logs = (logs + msg).takeLast(14)
+              }
+
+              fun refreshTools() {
+                  toolStatuses = AssetsAndPackageManager.getCoreToolsStatus(context)
+                  versionMap = packages.associate { it.id to AssetsAndPackageManager.getInstalledVersion(context, it.id) }
+              }
+
+              LaunchedEffect(Unit) {
+                  withContext(Dispatchers.IO) {
+                      AssetsAndPackageManager.extractAssetsOnStartup(context) { appendLog(it) }
+                  }
+                  refreshTools()
+                  statusMsg = "Ready • PyServer 2.0 + Python Bridge"
+              }
+
+              val bgDark = Color(0xFF070A10)
+              val cardDark = Color(0xFF101724)
+              val borderNeon = Color(0xFF1E293B)
+              val cyanAccent = Color(0xFF00F0FF)
+              val greenOk = Color(0xFF10B981)
+              val amberWarn = Color(0xFFF59E0B)
+
+              Scaffold(
+                  containerColor = bgDark,
+                  bottomBar = {
+                      NavigationBar(containerColor = cardDark) {
+                          NavigationBarItem(
+                              selected = tab == 0,
+                              onClick = { tab = 0 },
+                              icon = { Icon(Icons.Default.CloudDownload, contentDescription = null) },
+                              label = { Text("Downloader") }
+                          )
+                          NavigationBarItem(
+                              selected = tab == 1,
+                              onClick = { tab = 1; refreshTools() },
+                              icon = { Icon(Icons.Default.Extension, contentDescription = null) },
+                              label = { Text("Packages") }
+                          )
+                          NavigationBarItem(
+                              selected = tab == 2,
+                              onClick = { tab = 2 },
+                              icon = { Icon(Icons.Default.Key, contentDescription = null) },
+                              label = { Text("Token & BG") }
+                          )
+                      }
+                  }
+              ) { pad ->
+                  LazyColumn(
+                      modifier = Modifier.fillMaxSize().padding(pad).padding(14.dp),
+                      verticalArrangement = Arrangement.spacedBy(12.dp)
+                  ) {
+                      item {
+                          Card(
+                              colors = CardDefaults.cardColors(containerColor = cardDark),
+                              shape = RoundedCornerShape(16.dp),
+                              modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                          ) {
+                              Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                  Text("PyServer 2.0", color = cyanAccent, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                  Text(statusMsg, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall)
+                              }
+                          }
+                      }
+
+                      when (tab) {
+                          0 -> {
+                              item {
+                                  Card(
+                                      colors = CardDefaults.cardColors(containerColor = cardDark),
+                                      shape = RoundedCornerShape(16.dp),
+                                      modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))
+                                  ) {
+                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                          OutlinedTextField(
+                                              value = mediaUrl,
+                                              onValueChange = { mediaUrl = it },
+                                              label = { Text("Paste Video / Media URL") },
+                                              singleLine = true,
+                                              modifier = Modifier.fillMaxWidth()
+                                          )
+                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                              Text("Python Bridge Analyze", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                              Switch(checked = usePyBridge, onCheckedChange = { usePyBridge = it })
+                                          }
+                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                              Text("Use aria2c Accelerator", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                              Switch(checked = useAria2, onCheckedChange = { useAria2 = it })
+                                          }
+                                          Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                              OutlinedButton(onClick = { clipboard.getText()?.text?.let { mediaUrl = it } }, modifier = Modifier.weight(1f)) {
+                                                  Text("Paste", color = Color.White)
+                                              }
+                                              Button(
+                                                  onClick = {
+                                                      working = true
+                                                      statusMsg = "Analyzing..."
+                                                      scope.launch {
+                                                          val res = withContext(Dispatchers.IO) {
+                                                              MediaDownloaderEngine.analyzeUrl(context, mediaUrl, usePyBridge)
+                                                          }
+                                                          working = false
+                                                          res.onSuccess {
+                                                              analysis = it
+                                                              selectedFormat = it.formats.firstOrNull()
+                                                              statusMsg = "Found ${it.formats.size} formats"
+                                                          }.onFailure {
+                                                              statusMsg = "Error: ${it.message}"
+                                                          }
+                                                      }
+                                                  },
+                                                  enabled = !working,
+                                                  colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                                  modifier = Modifier.weight(2f)
+                                              ) {
+                                                  Text(if (working) "Working..." else "Analyze URL")
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+
+                              analysis?.let { info ->
+                                  item {
+                                      Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
+                                          Column(modifier = Modifier.padding(14.dp)) {
+                                              Text(info.title, color = Color.White, fontWeight = FontWeight.Bold)
+                                              Text("Engine: ${info.extractor} • Duration: ${info.duration}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                          }
+                                      }
+                                  }
+                                  items(info.formats) { fmt ->
+                                      val picked = selectedFormat == fmt
+                                      Card(
+                                          colors = CardDefaults.cardColors(containerColor = if (picked) Color(0xFF17253B) else cardDark),
+                                          shape = RoundedCornerShape(12.dp),
+                                          modifier = Modifier.fillMaxWidth().border(1.dp, if (picked) cyanAccent else borderNeon, RoundedCornerShape(12.dp)).clickable { selectedFormat = fmt }
+                                      ) {
+                                          Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                              Column(modifier = Modifier.weight(1f)) {
+                                                  Text(fmt.titleLabel, color = Color.White, fontWeight = FontWeight.SemiBold)
+                                                  Text(fmt.metaInfo, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                              }
+                                              RadioButton(selected = picked, onClick = { selectedFormat = fmt })
+                                          }
+                                      }
+                                  }
+                                  item {
+                                      Button(
+                                          onClick = {
+                                              val fmt = selectedFormat ?: return@Button
+                                              working = true
+                                              statusMsg = "Downloading ${fmt.titleLabel}..."
+                                              scope.launch {
+                                                  val res = withContext(Dispatchers.IO) {
+                                                      MediaDownloaderEngine.downloadMedia(context, mediaUrl, fmt, useAria2) { appendLog(it) }
+                                                  }
+                                                  working = false
+                                                  statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                              }
+                                          },
+                                          enabled = !working && selectedFormat != null,
+                                          colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                          modifier = Modifier.fillMaxWidth()
+                                      ) {
+                                          Text("Download Selected Format")
+                                      }
+                                  }
+                              }
+                          }
+
+                          1 -> {
+                              item {
+                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
+                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                          Text("Tools & Python Status", color = cyanAccent, fontWeight = FontWeight.Bold)
+                                          toolStatuses.forEach { st ->
+                                              Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                                  Text(st.name, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                                  Text(if (st.installed) "Ready" else "Missing", color = if (st.installed) greenOk else amberWarn, style = MaterialTheme.typography.bodySmall)
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                              item {
+                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
+                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                          OutlinedTextField(value = manifestUrl, onValueChange = { manifestUrl = it }, label = { Text("GitHub manifest.json URL") }, modifier = Modifier.fillMaxWidth())
+                                          Button(
+                                              onClick = {
+                                                  working = true
+                                                  AssetsAndPackageManager.setManifestUrl(context, manifestUrl)
+                                                  scope.launch {
+                                                      val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.fetchManifest(context, manifestUrl) }
+                                                      working = false
+                                                      res.onSuccess { list -> packages = list; refreshTools(); statusMsg = "Loaded ${list.size} packages" }
+                                                          .onFailure { statusMsg = "Error: ${it.message}" }
+                                                  }
+                                              },
+                                              enabled = !working,
+                                              colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
+                                              modifier = Modifier.fillMaxWidth()
+                                          ) {
+                                              Text("Fetch Manifest & Check Updates")
+                                          }
+                                      }
+                                  }
+                              }
+                              items(packages) { pkg ->
+                                  val localVer = versionMap[pkg.id]
+                                  val action = when {
+                                      localVer == null -> "Install"
+                                      localVer != pkg.version -> "Update"
+                                      else -> "Reinstall"
+                                  }
+                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
+                                      Row(modifier = Modifier.padding(12.dp).fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                          Column(modifier = Modifier.weight(1f)) {
+                                              Text(pkg.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                              Text("Latest: v${pkg.version} • Installed: ${localVer?.let { "v$it" } ?: "None"}", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall)
+                                          }
+                                          Button(
+                                              onClick = {
+                                                  working = true
+                                                  scope.launch {
+                                                      val res = withContext(Dispatchers.IO) { AssetsAndPackageManager.installPackage(context, pkg) { statusMsg = it } }
+                                                      working = false
+                                                      refreshTools()
+                                                      statusMsg = res.getOrElse { "Failed: ${it.message}" }
+                                                  }
+                                              },
+                                              enabled = !working,
+                                              colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black)
+                                          ) {
+                                              Text(action)
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+
+                          else -> {
+                              item {
+                                  Card(colors = CardDefaults.cardColors(containerColor = cardDark), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(16.dp))) {
+                                      Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                          Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                              Text("Background Service", color = Color.White, fontWeight = FontWeight.Bold)
+                                              Switch(
+                                                  checked = bgActive,
+                                                  onCheckedChange = { enabled ->
+                                                      bgActive = enabled
+                                                      val intent = Intent(context, BackgroundEngineService::class.java).apply {
+                                                          putExtra("gateway_url", gatewayUrl.trim())
+                                                          putExtra("token", apiToken.trim())
+                                                      }
+                                                      if (enabled) ContextCompat.startForegroundService(context, intent)
+                                                      else context.stopService(intent)
+                                                  }
+                                              )
+                                          }
+                                          OutlinedTextField(value = gatewayUrl, onValueChange = { gatewayUrl = it }, label = { Text("Render Gateway URL") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                          OutlinedTextField(value = apiToken, onValueChange = { apiToken = it }, label = { Text("API Token (/tokenrender)") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                                          OutlinedButton(
+                                              onClick = {
+                                                  val base = gatewayUrl.trim().trimEnd('/')
+                                                  context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("$base/tokenrender")))
+                                              },
+                                              modifier = Modifier.fillMaxWidth()
+                                          ) {
+                                              Text("Open /tokenrender", color = cyanAccent)
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+                      }
+
+                      item {
+                          Card(colors = CardDefaults.cardColors(containerColor = Color(0xFF0A0F18)), shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth().border(1.dp, borderNeon, RoundedCornerShape(14.dp))) {
+                              Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                  Text("Engine Console", color = cyanAccent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                                  logs.forEach { line ->
+                                      Text(line, color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                                  }
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+          EOF
+
+      - name: Push scaffolded sources to GitHub repo
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Scaffold PyServer 2.0 Jetpack Compose project sources"
+            git push origin HEAD:main
+          fi
+
+      - name: Fetch ARM64 tools into assets/tools
+        run: |
+          mkdir -p app/src/main/assets/tools
+          curl -fsSL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64 -o app/src/main/assets/tools/yt-dlp || true
+          curl -fsSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz -o /tmp/ffmpeg.tar.xz || true
+          if [ -f /tmp/ffmpeg.tar.xz ]; then
+            tar -xf /tmp/ffmpeg.tar.xz -C /tmp
+            cp /tmp/ffmpeg-*-arm64-static/ffmpeg app/src/main/assets/tools/ffmpeg || true
+            cp /tmp/ffmpeg-*-arm64-static/ffprobe app/src/main/assets/tools/ffprobe || true
+          fi
+          chmod +x app/src/main/assets/tools/* 2>/dev/null || true
+
+      - name: Setup Gradle Wrapper & JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ensure Gradle Wrapper exists
+        run: |
+          if [ ! -f ./gradlew ]; then
+            gradle wrapper --gradle-version 8.9
+          fi
+          chmod +x ./gradlew
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PyServer2-Debug-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
