@@ -71,7 +71,7 @@ fun PyServerAnimatedApp() {
 
     val manifestUrlState = remember { mutableStateOf(AssetsAndPackageManager.getManifestUrl(context)) }
     val packagesState = remember { mutableStateOf<List<ManifestPackage>>(emptyList()) }
-    val versionMapState = remember { mutableStateOf>(emptyMap()) }
+    val versionMapState = remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
     val toolStatusesState = remember { mutableStateOf<List<ToolStatus>>(emptyList()) }
 
     val gatewayUrlState = remember { mutableStateOf("https://your-gateway.onrender.com") }
