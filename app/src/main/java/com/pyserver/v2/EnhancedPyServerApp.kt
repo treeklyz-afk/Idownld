@@ -125,7 +125,7 @@ private fun SplashPage() {
     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF0C1323), Ink))), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Box(Modifier.size(92.dp).clip(RoundedCornerShape(30.dp)).background(Brush.linearGradient(listOf(Cyan, Violet))), contentAlignment = Alignment.Center) {
-                Text("P", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = Ink)
+                Text("⇩", style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black, color = Ink)
             }
             Text("PyServer", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = Color.White)
             Text("MEDIA • DOWNLOADS • TOOLS", style = MaterialTheme.typography.labelMedium, color = TextMuted)
@@ -177,7 +177,7 @@ private fun OnboardingPage(onDone: () -> Unit) {
             Box(Modifier.size(76.dp).clip(RoundedCornerShape(24.dp)).background(PanelRaised), contentAlignment = Alignment.Center) {
                 Text(slide.third, color = Cyan, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
             }
-            Text("PyServer Downloader", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
+            Text("Idownld Downloader", style = MaterialTheme.typography.headlineSmall, color = Color.White, fontWeight = FontWeight.Bold)
             Text(slide.first, style = MaterialTheme.typography.displaySmall, color = Cyan, fontWeight = FontWeight.Bold)
             Text(slide.second, style = MaterialTheme.typography.bodyLarge, color = TextMuted)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -207,6 +207,9 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     var playingUrl by rememberSaveable { mutableStateOf("") }
     var playingTitle by rememberSaveable { mutableStateOf("") }
     var playerReturnFlow by rememberSaveable { mutableStateOf("formats") }
+    var imageUri by rememberSaveable { mutableStateOf("") }
+    var imageTitle by rememberSaveable { mutableStateOf("") }
+    var imageReturnFlow by rememberSaveable { mutableStateOf("home") }
     var downloadMessage by rememberSaveable { mutableStateOf("") }
     var queueTasks by remember { mutableStateOf(emptyList<DownloadTaskSnapshot>()) }
     var thumbnailMessage by rememberSaveable { mutableStateOf("") }
@@ -226,7 +229,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     var busy by rememberSaveable { mutableStateOf(false) }
 
     fun refreshHistory() {
-        scope.launch { history = withContext(Dispatchers.IO) { MediaStoreDownloads.queryHistory(context).filter { it.mediaType == "video" || it.mediaType == "audio" } } }
+        scope.launch { history = withContext(Dispatchers.IO) { MediaStoreDownloads.queryHistory(context) } }
     }
     fun refreshQueue() {
         scope.launch { queueTasks = runCatching { withContext(Dispatchers.IO) { DownloadQueue.query(context) } }.getOrDefault(emptyList()) }
@@ -339,7 +342,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     }
 
     BackHandler(enabled = flow != "home") {
-        flow = when (flow) { "player" -> playerReturnFlow; else -> "home" }
+        flow = when (flow) { "player" -> playerReturnFlow; "image" -> imageReturnFlow; else -> "home" }
     }
 
     Scaffold(
@@ -352,7 +355,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                             selected = destination == key,
                             onClick = { destination = key },
                             icon = { Icon(imageVector = when (key) { "home" -> Icons.Filled.Home; "downloads" -> Icons.Filled.Download; "players" -> Icons.Filled.PlayArrow; "history" -> Icons.Filled.History; else -> Icons.Filled.Settings }, contentDescription = label, tint = if (destination == key) Cyan else TextMuted) },
-                            label = { Text(label, maxLines = 1, softWrap = false) }
+                            label = { Text(if (key == "history") "Library" else label, maxLines = 1, softWrap = false) }
                         )
                     }
                 }
@@ -398,6 +401,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     title = playingTitle,
                     onBack = { flow = playerReturnFlow }
                 )
+                flow == "image" -> ImageViewerPage(uri = imageUri, title = imageTitle, onBack = { flow = imageReturnFlow })
                 destination == "home" -> HomePage(
                     url = mediaUrl,
                     onUrl = { mediaUrl = it },
@@ -406,14 +410,20 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     error = analysisError,
                     onHistory = { destination = "history" },
                     onSettings = { destination = "settings" },
-                    onDiagnostics = { context.startActivity(Intent(context, CrashDebugActivity::class.java)) }
+                    onDiagnostics = { context.startActivity(Intent(context, CrashDebugActivity::class.java)) },
+                    onQueue = { destination = "downloads" },
+                    onPlayers = { destination = "players" },
+                    onLibrary = { destination = "history" }
                 )
                 destination == "downloads" -> DownloadsPage(
                     tasks = queueTasks,
                     message = downloadMessage,
                     showThumbnails = showThumbnails,
-                    recent = history.take(4),
-                    onOpenMedia = { item -> playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" },
+                    recent = history.filter { it.mediaType == "video" || it.mediaType == "audio" }.take(4),
+                    onOpenMedia = { item ->
+                        if (item.mediaType == "thumbnail") { imageUri = item.uri.toString(); imageTitle = item.displayName; imageReturnFlow = "home"; flow = "image" }
+                        else { playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
+                    },
                     onHistory = { destination = "history" },
                     onRefresh = { refreshHistory(); refreshQueue() },
                     onPause = { id -> scope.launch(Dispatchers.IO) { DownloadQueue.pause(context, id); refreshQueue() } },
@@ -424,13 +434,19 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     items = history.filter { it.mediaType == "video" || it.mediaType == "audio" },
                     showThumbnails = showThumbnails,
                     onRefresh = ::refreshHistory,
-                    onOpenMedia = { item -> playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
+                    onOpenMedia = { item ->
+                        if (item.mediaType == "thumbnail") { imageUri = item.uri.toString(); imageTitle = item.displayName; imageReturnFlow = "home"; flow = "image" }
+                        else { playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
+                    }
                 )
                 destination == "history" -> HistoryPage(
                     items = history,
                     showThumbnails = showThumbnails,
                     onRefresh = ::refreshHistory,
-                    onOpenMedia = { item -> playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
+                    onOpenMedia = { item ->
+                        if (item.mediaType == "thumbnail") { imageUri = item.uri.toString(); imageTitle = item.displayName; imageReturnFlow = "home"; flow = "image" }
+                        else { playerReturnFlow = "home"; playingUrl = item.uri.toString(); playingTitle = item.displayName; flow = "player" }
+                    }
                 )
                 else -> SettingsPage(
                     preferences = preferences,
@@ -478,20 +494,32 @@ private fun HomePage(
     error: String,
     onHistory: () -> Unit,
     onSettings: () -> Unit,
-    onDiagnostics: () -> Unit
+    onDiagnostics: () -> Unit,
+    onQueue: () -> Unit,
+    onPlayers: () -> Unit,
+    onLibrary: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Column {
-                Text("PyServer", color = Cyan, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Your media, organized.", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+                Text("Idownld", color = Cyan, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Ultimate media downloader", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
             }
-            Box(Modifier.size(44.dp).clip(CircleShape).background(PanelRaised), contentAlignment = Alignment.Center) { Text("P", color = Cyan, fontWeight = FontWeight.Black) }
+            Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Cyan, Violet))), contentAlignment = Alignment.Center) { Text("⇩", color = Ink, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black) }
+        }
+        Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Violet.copy(alpha = 0.55f), RoundedCornerShape(24.dp))) {
+            Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF24054B), Color(0xFF101B37)))).padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text("Your ultimate media downloader", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    Text("Fast • Secure • Organized", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                }
+                Text("▶", color = Violet, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
+            }
         }
         Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(26.dp)) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                Text("Paste a media link", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Site page, playlist or direct video/audio URL", color = TextMuted)
+                Text("Analyze a link", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Video, audio, image or playlist URL", color = TextMuted)
                 OutlinedTextField(
                     value = url, onValueChange = onUrl, modifier = Modifier.fillMaxWidth(), singleLine = true,
                     label = { Text("https://…") }, shape = RoundedCornerShape(16.dp),
@@ -509,6 +537,17 @@ private fun HomePage(
         }
         OutlinedButton(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
             Text("Crash log & diagnostics", color = Cyan, fontWeight = FontWeight.SemiBold)
+        }
+        Text("Quick access", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            QuickAction("Video", "▶", onPlayers, Modifier.weight(1f))
+            QuickAction("Audio", "♫", onPlayers, Modifier.weight(1f))
+            QuickAction("Images", "▧", onLibrary, Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            QuickAction("All media", "▦", onLibrary, Modifier.weight(1f))
+            QuickAction("Queue", "⇩", onQueue, Modifier.weight(1f))
+            QuickAction("Settings", "⚙", onSettings, Modifier.weight(1f))
         }
         Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -736,13 +775,22 @@ private fun DownloadsPage(
     onResume: (java.util.UUID) -> Unit,
     onCancel: (java.util.UUID) -> Unit
 ) {
+    var selectedQueueTab by rememberSaveable { mutableIntStateOf(0) }
+    val activeTasks = tasks.filter { !it.state.isFinished }
+    val completedTasks = tasks.filter { it.state.isFinished }
+    val visibleTasks = when (selectedQueueTab) { 1 -> activeTasks; 2 -> completedTasks; else -> tasks }
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text("Download queue", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Background tasks • pause, resume or cancel", color = TextMuted) }
+            Column { Text("Download manager", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold); Text("Background tasks • pause, resume or cancel", color = TextMuted) }
             TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
         }
-        if (tasks.isEmpty()) EmptyStateCard("Queue is empty", "Downloads run through Android WorkManager with foreground progress. They can continue after the app process exits, but not after uninstall.")
-        else tasks.forEach { task ->
+        TabRow(selectedTabIndex = selectedQueueTab, containerColor = Panel, contentColor = Cyan) {
+            listOf("Queue ${tasks.size}", "Active ${activeTasks.size}", "Completed ${completedTasks.size}").forEachIndexed { index, tab ->
+                Tab(selected = selectedQueueTab == index, onClick = { selectedQueueTab = index }, text = { Text(tab, maxLines = 1, softWrap = false) })
+            }
+        }
+        if (visibleTasks.isEmpty()) EmptyStateCard("No ${listOf("queued", "active", "completed")[selectedQueueTab]} downloads", "Queued transfers show live progress and allow pause, resume or cancel.")
+        else visibleTasks.forEach { task ->
             val done = task.state.isFinished
             val percent = if (task.totalBytes > 0L) (task.downloadedBytes * 100L / task.totalBytes).coerceIn(0L, 100L).toInt() else 0
             Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(20.dp)) {
@@ -775,31 +823,67 @@ private fun DownloadsPage(
 
 @Composable
 private fun PlayersPage(items: List<DownloadHistoryItem>, showThumbnails: Boolean, onRefresh: () -> Unit, onOpenMedia: (DownloadHistoryItem) -> Unit) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    val videos = items.filter { it.mediaType == "video" }
+    val audios = items.filter { it.mediaType == "audio" }
+    val visible = if (selectedTab == 0) videos else audios
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text("Players", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Your saved videos and audio", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
+            Column { Text("Media players", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Your saved videos and audio", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
             TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
         }
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(10.dp))
+        TabRow(selectedTabIndex = selectedTab, containerColor = Panel, contentColor = Cyan) {
+            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Videos ${videos.size}") })
+            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Audios ${audios.size}") })
+        }
         if (items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyStateCard("No playable media yet", "Downloaded videos and audio saved in Download/PyServer appear here. Tap a file to open it in ExoPlayer.") }
+        else if (visible.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyStateCard("No ${if (selectedTab == 0) "videos" else "audio"} yet", "Your saved ${if (selectedTab == 0) "videos" else "audio files"} appear here.") }
         else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
-            items(items, key = { it.uri.toString() }) { item -> HistoryItemCard(item, showThumbnails) { onOpenMedia(item) } }
+            items(visible, key = { it.uri.toString() }) { item -> HistoryItemCard(item, showThumbnails) { onOpenMedia(item) } }
         }
     }
 }
 
 @Composable
 private fun HistoryPage(items: List<DownloadHistoryItem>, showThumbnails: Boolean, onRefresh: () -> Unit, onOpenMedia: (DownloadHistoryItem) -> Unit) {
+    var selectedKind by rememberSaveable { mutableStateOf("All") }
+    val videos = items.filter { it.mediaType == "video" }
+    val audios = items.filter { it.mediaType == "audio" }
+    val images = items.filter { it.mediaType == "thumbnail" }
+    val shown = when (selectedKind) { "Videos" -> videos; "Audios" -> audios; "Images" -> images; else -> items }
+    val kinds = listOf("All", "Videos", "Audios", "Images")
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).padding(horizontal = 16.dp, vertical = 14.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column { Text("Download history", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Saved in Download/PyServer/Video, Audio or Thumbnails", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
+            Column { Text("All media", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold); Text("Videos, audio and saved thumbnails", color = TextMuted, style = MaterialTheme.typography.bodySmall) }
             TextButton(onClick = onRefresh) { Text("Refresh", color = Cyan) }
         }
-        Spacer(Modifier.height(12.dp))
-        if (items.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyStateCard("Nothing downloaded yet", "Your app downloads will appear here with thumbnails, file sizes and playback.") }
-        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
-            items(items, key = { it.uri.toString() }) { item -> HistoryItemCard(item, showThumbnails) { onOpenMedia(item) } }
+        Spacer(Modifier.height(10.dp))
+        ScrollableTabRow(selectedTabIndex = kinds.indexOf(selectedKind), containerColor = Ink, contentColor = Cyan, edgePadding = 0.dp) {
+            kinds.forEach { kind ->
+                val count = when (kind) { "Videos" -> videos.size; "Audios" -> audios.size; "Images" -> images.size; else -> items.size }
+                Tab(selected = selectedKind == kind, onClick = { selectedKind = kind }, text = { Text("$kind  $count", maxLines = 1) })
+            }
         }
+        Spacer(Modifier.height(10.dp))
+        if (shown.isEmpty()) Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { EmptyStateCard("Nothing here yet", "Your saved videos, audios and thumbnails will appear in this library.") }
+        else LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), contentPadding = PaddingValues(bottom = 20.dp)) {
+            items(shown, key = { it.uri.toString() }) { item -> HistoryItemCard(item, showThumbnails) { onOpenMedia(item) } }
+        }
+    }
+}
+
+@Composable
+private fun ImageViewerPage(uri: String, title: String, onBack: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(Ink).padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("‹ Back to library", color = Cyan) }
+            Spacer(Modifier.weight(1f))
+            Text("IMAGE", color = TextMuted, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+        Text(title, color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        AsyncImage(model = Uri.parse(uri), contentDescription = title, modifier = Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(22.dp)).background(Panel), contentScale = androidx.compose.ui.layout.ContentScale.Fit)
+        Text("Saved image • Idownld Library", color = TextMuted, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -808,23 +892,23 @@ private fun HistoryItemCard(item: DownloadHistoryItem, showThumbnails: Boolean, 
     val context = LocalContext.current
     var bitmap by remember(item.uri) { mutableStateOf<Bitmap?>(null) }
     LaunchedEffect(item.uri, item.mediaType, showThumbnails) {
-        if (showThumbnails && item.mediaType == "video") {
+        if (showThumbnails && item.mediaType in setOf("video", "thumbnail")) {
             bitmap = withContext(Dispatchers.IO) { runCatching { context.contentResolver.loadThumbnail(item.uri, Size(480, 270), null) }.getOrNull() }
         }
     }
     Card(modifier = Modifier.fillMaxWidth().clickable(onClick = onClick), colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(18.dp)) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Box(Modifier.size(104.dp, 70.dp).clip(RoundedCornerShape(12.dp)).background(PanelRaised), contentAlignment = Alignment.Center) {
-                if (!showThumbnails) Text(if (item.mediaType == "audio") "♫" else "▶", color = Cyan, style = MaterialTheme.typography.headlineMedium)
-                else if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = "Video thumbnail", modifier = Modifier.fillMaxSize())
-                else Text(if (item.mediaType == "audio") "♫" else "▶", color = Cyan, style = MaterialTheme.typography.headlineMedium)
+                if (!showThumbnails) Text(when (item.mediaType) { "audio" -> "♫"; "thumbnail" -> "▧"; else -> "▶" }, color = Cyan, style = MaterialTheme.typography.headlineMedium)
+                else if (bitmap != null) Image(bitmap!!.asImageBitmap(), contentDescription = if (item.mediaType == "thumbnail") "Saved image" else "Video thumbnail", modifier = Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                else Text(when (item.mediaType) { "audio" -> "♫"; "thumbnail" -> "▧"; else -> "▶" }, color = Cyan, style = MaterialTheme.typography.headlineMedium)
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(item.displayName, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text("${item.mediaType.uppercase()} • ${formatByteCount(item.sizeBytes)}", color = Cyan, style = MaterialTheme.typography.labelSmall)
+                Text("${if (item.mediaType == "thumbnail") "IMAGE" else item.mediaType.uppercase()} • ${formatByteCount(item.sizeBytes)}", color = Cyan, style = MaterialTheme.typography.labelSmall)
                 Text(DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(item.dateAddedSeconds * 1000)), color = TextMuted, style = MaterialTheme.typography.labelSmall)
             }
-            Text(if (item.mediaType == "video") "▶" else "♫", color = Violet, fontWeight = FontWeight.Bold)
+            Text(when (item.mediaType) { "video" -> "▶"; "thumbnail" -> "▧"; else -> "♫" }, color = Violet, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -866,8 +950,8 @@ private fun SettingsPage(
         Text("Settings", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(22.dp)) {
             Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Box(Modifier.size(58.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(listOf(Cyan, Violet))), contentAlignment = Alignment.Center) { Text("P", color = Ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black) }
-                Column { Text("PyServer Downloader", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium); Text("Made by Raja Nisarul", color = TextMuted); Text("Version $APP_VERSION_NAME • Android", color = Cyan, style = MaterialTheme.typography.labelSmall) }
+                Box(Modifier.size(58.dp).clip(RoundedCornerShape(18.dp)).background(Brush.linearGradient(listOf(Cyan, Violet))), contentAlignment = Alignment.Center) { Text("⇩", color = Ink, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black) }
+                Column { Text("Idownld Downloader", color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium); Text("Made by Raja Nisarul", color = TextMuted); Text("Version $APP_VERSION_NAME • Android", color = Cyan, style = MaterialTheme.typography.labelSmall) }
             }
         }
         SettingsGroup("Network", "Transfer rules") {

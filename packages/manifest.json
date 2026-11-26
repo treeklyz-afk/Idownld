@@ -247,8 +247,8 @@
     }
   ],
   "appVersion": {
-    "versionCode": 12,
-    "versionName": "2.8.2"
+    "versionCode": 13,
+    "versionName": "2.8.3"
   },
   "updateSource": {
     "provider": "GitHub Releases",
