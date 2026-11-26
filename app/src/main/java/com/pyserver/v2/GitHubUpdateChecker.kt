@@ -7,7 +7,7 @@ import java.net.URL
 private const val GITHUB_REPO = "treeklyz-afk/Idownld"
 private const val GITHUB_RELEASES_API = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
 const val GITHUB_RELEASES_PAGE = "https://github.com/$GITHUB_REPO/releases"
-const val APP_VERSION_NAME = "2.8.1"
+const val APP_VERSION_NAME = "2.8.2"
 
 data class LatestGithubRelease(
     val tag: String,

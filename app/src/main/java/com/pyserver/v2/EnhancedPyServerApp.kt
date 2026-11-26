@@ -56,6 +56,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
@@ -69,8 +71,8 @@ import java.util.Date
 private val Ink = Color(0xFF070B13)
 private val Panel = Color(0xFF111A2B)
 private val PanelRaised = Color(0xFF17243A)
-private val Cyan = Color(0xFF36D9E8)
-private val Violet = Color(0xFF9D82FF)
+private val Cyan = Color(0xFFBD36FF)
+private val Violet = Color(0xFF32D5FF)
 private val TextMuted = Color(0xFFAAB7CC)
 private val Good = Color(0xFF67D9A2)
 
@@ -403,7 +405,8 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     busy = analysisStage in 0..4 && flow == "analysis",
                     error = analysisError,
                     onHistory = { destination = "history" },
-                    onSettings = { destination = "settings" }
+                    onSettings = { destination = "settings" },
+                    onDiagnostics = { context.startActivity(Intent(context, CrashDebugActivity::class.java)) }
                 )
                 destination == "downloads" -> DownloadsPage(
                     tasks = queueTasks,
@@ -474,7 +477,8 @@ private fun HomePage(
     busy: Boolean,
     error: String,
     onHistory: () -> Unit,
-    onSettings: () -> Unit
+    onSettings: () -> Unit,
+    onDiagnostics: () -> Unit
 ) {
     Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -502,6 +506,9 @@ private fun HomePage(
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             QuickAction("Download history", "◷", onHistory, Modifier.weight(1f))
             QuickAction("Preferences", "⚙", onSettings, Modifier.weight(1f))
+        }
+        OutlinedButton(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+            Text("Crash log & diagnostics", color = Cyan, fontWeight = FontWeight.SemiBold)
         }
         Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(20.dp)) {
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -679,23 +686,40 @@ private fun FormatsPage(
 @Composable
 private fun MediaPlayerPage(url: String, title: String, onBack: () -> Unit) {
     val context = LocalContext.current
-    val player = remember(url) {
-        ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(url))
-            playWhenReady = true
-            prepare()
+    var playbackError by remember(url) { mutableStateOf("") }
+    val playerResult = remember(url) {
+        runCatching {
+            require(url.startsWith("https://", true) || url.startsWith("http://", true) || url.startsWith("content://", true)) { "Unsupported or empty playback URL" }
+            ExoPlayer.Builder(context.applicationContext).build().apply {
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        playbackError = error.localizedMessage ?: "This stream or codec is not supported."
+                        CrashLogStore.recordHandled(context, "Media playback", error)
+                    }
+                })
+                setMediaItem(MediaItem.fromUri(url))
+                playWhenReady = true
+                prepare()
+            }
+        }.onFailure { error ->
+            playbackError = error.localizedMessage ?: "Could not open this media stream."
+            CrashLogStore.recordHandled(context, "Media player setup", error)
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
-    Column(Modifier.fillMaxSize().widthIn(max = 760.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    val player = playerResult.getOrNull()
+    DisposableEffect(player) { onDispose { player?.release() } }
+    Column(Modifier.fillMaxSize().widthIn(max = 760.dp).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) { Text("‹ Back to formats", color = Cyan) }
         Text(title, color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        AndroidView(
+        if (player != null) AndroidView(
             factory = { viewContext -> PlayerView(viewContext).apply { this.player = player; useController = true; setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING) } },
             update = { it.player = player },
             modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(18.dp))
-        )
-        Text("Playback depends on the source stream, supported codec and site access. This preview does not bypass login, DRM or access restrictions.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+        ) else Card(colors = CardDefaults.cardColors(containerColor = Panel), modifier = Modifier.fillMaxWidth()) {
+            Text(playbackError.ifBlank { "Playback could not start." }, color = Color(0xFFFF9B9B), modifier = Modifier.padding(16.dp))
+        }
+        if (playbackError.isNotBlank()) Text(playbackError, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall)
+        Text("Playback depends on source availability, supported codec and site access. This preview does not bypass login, DRM or access restrictions.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
     }
 }
 

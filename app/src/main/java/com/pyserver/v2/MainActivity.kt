@@ -1,5 +1,6 @@
 package com.pyserver.v2
 
+import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -38,9 +39,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+class PyServerApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        CrashLogStore.install(this)
+    }
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
-        CrashLogStore.install(applicationContext)
         super.onCreate(savedInstanceState)
         setContent { EnhancedPyServerApp() }
     }
