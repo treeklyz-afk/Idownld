@@ -17,6 +17,8 @@ for ABI in arm64-v8a x86_64; do
   sed -i \
     -e 's/OPENSSL_VERSION=1.1.1w/OPENSSL_VERSION=3.5.9/' \
     -e 's/ANDROID_NDK_HOME=\$NDK/ANDROID_NDK_HOME=\$NDK ANDROID_NDK_ROOT=\$NDK/' \
+    -e 's#https://zlib.net/\$ZLIB_ARCHIVE#https://zlib.net/fossils/\$ZLIB_ARCHIVE#' \
+    -e 's#https://c-ares.haxx.se/download/\$CARES_ARCHIVE#https://github.com/c-ares/c-ares/releases/download/cares-1_21_0/\$CARES_ARCHIVE#' \
     -e 's/--with-libexpat/--without-libexpat/' \
     -e 's/--with-libcares/--without-libcares/' \
     -e 's/--with-libssh2/--without-libssh2/' \
