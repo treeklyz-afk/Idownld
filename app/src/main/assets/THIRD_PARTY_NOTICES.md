@@ -63,8 +63,14 @@ The MIT License: Permission is hereby granted, free of charge, to any person obt
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+## QuickJS-NG 0.12.1
+The Android `qjs` executable is built from QuickJS-NG tag `v0.12.1` for arm64-v8a and x86_64. It is used as the yt-dlp JavaScript runtime. The full MIT license is included at `third_party_licenses/QuickJS-NG-MIT.txt`; upstream source: https://github.com/quickjs-ng/quickjs/tree/v0.12.1 .
+
+## aria2 1.37.0
+The `aria2c` executables are built for arm64-v8a and x86_64 from the unmodified aria2 `release-1.37.0` source under GPL version 2 or later. The complete license is in `third_party_licenses/GPL-2.0.txt`; corresponding source is at https://github.com/aria2/aria2/tree/release-1.37.0 . The app build recipe is available at https://github.com/treeklyz-afk/Idownld/blob/main/scripts/build-aria2-android.sh . OpenSSL 3.5.9 is statically linked for HTTPS. yt-dlp uses aria2 for supported HTTP(S) transfers and keeps segmented HLS/DASH on its native downloader.
+
 ## Feature limitations in this build
-The yt-dlp-ejs scripts are bundled, but no compatible QuickJS/Deno/Node runtime is included yet. YouTube EJS challenge solving is therefore not guaranteed. The FFmpeg AAR exposes JNI APIs; this app does not provide yt-dlp with an ffmpeg executable, so video downloads are restricted to muxed single-file formats and audio-only streams. x264/x265 encoders are not included in this LGPL build; FDK-AAC remains excluded pending licensing and patent review. Site extraction availability depends on the site, extractor, access controls, authentication, and current site behavior.
+The yt-dlp-ejs scripts and QuickJS runtime are bundled and configured for challenge solving. Site extraction availability still depends on platform access rules, authentication, regional availability and current site behavior. The FFmpeg AAR exposes JNI APIs; this app does not provide yt-dlp with an ffmpeg executable, so video downloads are restricted to muxed single-file formats and audio-only streams. x264/x265 encoders are not included in this LGPL build; FDK-AAC remains excluded pending licensing and patent review.
 
 ## Media3 ExoPlayer 1.5.1 and Coil Compose 2.7.0
 The app packages AndroidX Media3 ExoPlayer/Media3 UI and Coil Compose under Apache License 2.0. The full Apache-2.0 license text is included in `app/src/main/assets/third_party_licenses/Apache-2.0.txt` and in the APK. Upstream projects: https://github.com/androidx/media and https://github.com/coil-kt/coil . Media3 is used for user-initiated stream/history playback; Coil displays remote thumbnails when the user preference is enabled. These libraries do not remove source-site access restrictions.

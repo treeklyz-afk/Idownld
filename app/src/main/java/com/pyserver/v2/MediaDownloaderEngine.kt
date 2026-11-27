@@ -240,7 +240,7 @@ object MediaDownloaderEngine {
         context: Context,
         rawUrl: String,
         choice: FormatChoice,
-        useAria2: Boolean = false,
+        useAria2: Boolean = true,
         onLog: (String) -> Unit = {},
         onProgress: (DownloadProgress) -> Unit = {},
         taskId: String? = null
@@ -250,7 +250,7 @@ object MediaDownloaderEngine {
         if (choice.formatId == "direct") return nativeStreamDownload(context, url, choice, onLog, onProgress, taskId)
         return try {
             onLog("Downloading with APK-bundled yt-dlp...")
-            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId, onProgress = onProgress, taskId = taskId), choice.mediaType)
+            publishYtDlpFiles(context, YtDlpRuntime.download(context, url, choice.formatId, onProgress = onProgress, taskId = taskId, useAria2 = useAria2), choice.mediaType)
         } catch (e: Exception) {
             Result.failure(IllegalStateException("yt-dlp download failed: ${e.message ?: "unknown error"}"))
         }
@@ -262,7 +262,7 @@ object MediaDownloaderEngine {
         rawUrl: String,
         choice: FormatChoice,
         selectedIndices: List<Int>? = null,
-        useAria2: Boolean = false,
+        useAria2: Boolean = true,
         onLog: (String) -> Unit = {},
         onProgress: (DownloadProgress) -> Unit = {},
         taskId: String? = null
@@ -277,7 +277,7 @@ object MediaDownloaderEngine {
             onLog("Downloading collection with APK-bundled yt-dlp...")
             publishYtDlpFiles(
                 context,
-                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true, onProgress = onProgress, taskId = taskId),
+                YtDlpRuntime.download(context, rawUrl, choice.formatId, selectedIndices, playlistMode = true, onProgress = onProgress, taskId = taskId, useAria2 = useAria2),
                 choice.mediaType
             )
         } catch (e: Exception) {

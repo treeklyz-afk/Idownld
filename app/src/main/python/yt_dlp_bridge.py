@@ -8,6 +8,53 @@ from yt_dlp import YoutubeDL
 PREVIEW_LIMIT = 100
 
 
+_QUICKJS_PATH = ""
+_ARIA2_PATH = ""
+
+
+def configure_quickjs(executable_path):
+    """Set the ABI-matched qjs executable installed in app-private storage."""
+    global _QUICKJS_PATH
+    path = str(executable_path or "")
+    if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
+        raise RuntimeError("Bundled QuickJS executable is missing or not executable")
+    _QUICKJS_PATH = path
+
+
+def configure_aria2(executable_path):
+    """Expose the ABI-matched aria2c to yt-dlp's external-downloader adapter."""
+    global _ARIA2_PATH
+    path = str(executable_path or "")
+    if not path or not os.path.isfile(path) or not os.access(path, os.X_OK):
+        raise RuntimeError("Bundled aria2 executable is missing or not executable")
+    _ARIA2_PATH = path
+    runtime_dir = os.path.dirname(path)
+    downloader_name = os.path.join(runtime_dir, "aria2c")
+    try:
+        if os.path.lexists(downloader_name) and os.path.realpath(downloader_name) != os.path.realpath(path):
+            os.unlink(downloader_name)
+        if not os.path.lexists(downloader_name):
+            os.symlink(path, downloader_name)
+    except OSError as error:
+        raise RuntimeError("Could not expose bundled aria2 as aria2c") from error
+    current_path = os.environ.get("PATH", "")
+    path_entries = current_path.split(os.pathsep) if current_path else []
+    if runtime_dir not in path_entries:
+        os.environ["PATH"] = runtime_dir + (os.pathsep + current_path if current_path else "")
+
+
+def _runtime_options(use_aria2=False):
+    options = {}
+    if _QUICKJS_PATH:
+        options["js_runtimes"] = {"quickjs": {"path": _QUICKJS_PATH}}
+    if use_aria2 and _ARIA2_PATH:
+        options["external_downloader"] = "aria2c"
+        options["external_downloader_args"] = {
+            "aria2c": ["-x8", "-s8", "-k1M", "--file-allocation=none"]
+        }
+    return options
+
+
 def _simple_info(info):
     result = {
         "title": str(info.get("title") or "Media")[:240],
@@ -61,6 +108,7 @@ def analyze(url):
         "noplaylist": False,
         "ignoreerrors": False,
     }
+    options.update(_runtime_options())
     with YoutubeDL(options) as ydl:
         info = ydl.extract_info(url, download=False)
     if not isinstance(info, dict):
@@ -68,7 +116,7 @@ def analyze(url):
     return json.dumps(_simple_info(info), ensure_ascii=False, separators=(",", ":"))
 
 
-def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False, progress_file_path="", pause_marker_path=""):
+def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=False, progress_file_path="", pause_marker_path="", use_aria2=True):
     os.makedirs(output_dir, exist_ok=True)
     if format_id == "bestaudio":
         selected_format = "bestaudio"
@@ -118,8 +166,11 @@ def download(url, format_id, output_dir, playlist_indices_csv="", playlist_mode=
         "continuedl": True,
         "socket_timeout": 30,
         "concurrent_fragment_downloads": 4,
+        "retries": 5,
+        "fragment_retries": 5,
         "progress_hooks": [progress_hook],
     }
+    options.update(_runtime_options(use_aria2=bool(use_aria2)))
     if playlist_indices_csv:
         indices = [part.strip() for part in playlist_indices_csv.split(",") if part.strip()]
         if not indices or any(not item.isdigit() for item in indices):

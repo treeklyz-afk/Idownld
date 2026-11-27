@@ -1,6 +1,8 @@
 package com.pyserver.v2
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +16,7 @@ import android.os.Build
 import android.provider.Settings
 import android.util.Size
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -775,7 +778,9 @@ private fun DownloadsPage(
     onResume: (java.util.UUID) -> Unit,
     onCancel: (java.util.UUID) -> Unit
 ) {
+    val context = LocalContext.current
     var selectedQueueTab by rememberSaveable { mutableIntStateOf(0) }
+    var showFullFailure by rememberSaveable { mutableStateOf(false) }
     val activeTasks = tasks.filter { !it.state.isFinished }
     val completedTasks = tasks.filter { it.state.isFinished }
     val visibleTasks = when (selectedQueueTab) { 1 -> activeTasks; 2 -> completedTasks; else -> tasks }
@@ -798,7 +803,19 @@ private fun DownloadsPage(
                     if (showThumbnails && task.thumbnailUrl.isNotBlank()) AsyncImage(model = task.thumbnailUrl, contentDescription = "Queued download thumbnail", modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(14.dp)))
                     Text(task.title, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Text(if (task.isPaused) "Paused" else task.state.name.lowercase().replaceFirstChar { it.uppercase() }, color = if (task.state == androidx.work.WorkInfo.State.FAILED) Color(0xFFFF9B9B) else Cyan, style = MaterialTheme.typography.labelMedium)
-                    if (task.failureMessage.isNotBlank()) Text(task.failureMessage, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    if (task.failureMessage.isNotBlank()) {
+                        Text(task.failureMessage, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall, maxLines = if (showFullFailure) 40 else 3, overflow = TextOverflow.Ellipsis)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { showFullFailure = !showFullFailure }) {
+                                Text(if (showFullFailure) "Hide details" else "Full details", color = Cyan)
+                            }
+                            TextButton(onClick = {
+                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                clipboard.setPrimaryClip(ClipData.newPlainText("Idownld download error", task.failureMessage))
+                                Toast.makeText(context, "Full error copied", Toast.LENGTH_SHORT).show()
+                            }) { Text("Copy error", color = Cyan) }
+                        }
+                    }
                     if (task.totalBytes > 0L) LinearProgressIndicator(progress = { percent / 100f }, modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
                     else if (!done) LinearProgressIndicator(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -998,7 +1015,7 @@ private fun SettingsPage(
             nativeReport?.let { report ->
                 Text("FFmpeg JNI: ${if (report.available) "available" else "not confirmed"} • detected optional features: ${report.featureLibraries.joinToString().ifBlank { "none" }}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
             }
-            Text("QuickJS is not bundled; YouTube EJS challenges may fail. x264/x265 and FDK-AAC are excluded pending licensing decisions.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
+            Text("QuickJS-NG and aria2 are bundled for supported ABIs. Site access, login, regional restrictions and upstream changes may still prevent extraction. x264/x265 and FDK-AAC are excluded pending licensing decisions.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
         }
         TextButton(onClick = { onOpenRelease(GITHUB_RELEASES_PAGE) }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Repository & release history", color = Cyan) }
     }

@@ -416,8 +416,8 @@ fun PyServerMediaApp() {
                                     loaderTitleState.value = "Downloading ${fmt.titleLabel}..."
                                     scope.launch {
                                         val res = withContext(Dispatchers.IO) {
-                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, fmt.sourceUrl ?: mediaUrlState.value, fmt, useAria2 = false, onLog = { appendLog(it) })
-                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), useAria2 = false, onLog = { appendLog(it) })
+                                            if (info.entries.isEmpty()) MediaDownloaderEngine.downloadMedia(context, fmt.sourceUrl ?: mediaUrlState.value, fmt, onLog = { appendLog(it) })
+                                            else MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, playlistSelectionState.value.toList(), onLog = { appendLog(it) })
                                         }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
@@ -442,7 +442,7 @@ fun PyServerMediaApp() {
                                     workingState.value = true
                                     loaderTitleState.value = "Downloading full collection..."
                                     scope.launch {
-                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, selectedIndices = null, useAria2 = false, onLog = { appendLog(it) }) }
+                                        val res = withContext(Dispatchers.IO) { MediaDownloaderEngine.downloadPlaylist(context, mediaUrlState.value, fmt, selectedIndices = null, onLog = { appendLog(it) }) }
                                         workingState.value = false
                                         statusMsgState.value = res.getOrElse { it.message ?: "Download failed" }
                                         appendLog(statusMsgState.value)
@@ -491,7 +491,7 @@ fun PyServerMediaApp() {
                                     Text("FFprobe JNI check:\n$it", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 }
                                 Text(
-                                    "Bundled extractor: CPython 3.13, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0, Jsoup 1.24.1. QuickJS is not included; YouTube EJS challenges may therefore fail. Site availability varies.",
+                                    "Bundled extractor: CPython 3.13, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0, QuickJS-NG 0.12.1, aria2 1.37.0 and Jsoup 1.24.1. YouTube challenge solving and parallel HTTP(S) transfer are enabled; site access rules, login, region and platform changes can still block a download.",
                                     color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -525,7 +525,7 @@ fun PyServerMediaApp() {
                     }
                     item {
                         Text(
-                            "x264/x265 GPL encoders are not included in this LGPL build; FDK-AAC is excluded pending licensing and patent review. FFmpegKit's JNI API is bundled, but yt-dlp uses only muxed single-file video formats here because an FFmpeg CLI adapter is not bundled. QuickJS is not included, so full YouTube EJS challenge solving is not promised.",
+                            "QuickJS challenge support and aria2 parallel HTTP(S) downloads are bundled. Site access and platform changes may still block a source. FFmpegKit's JNI API is bundled, but no FFmpeg CLI adapter is provided, so yt-dlp uses muxed single-file video formats rather than merging separate streams. x264/x265 encoders are not included in this LGPL build; FDK-AAC remains excluded pending licensing and patent review.",
                             color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall
                         )
                     }
@@ -620,7 +620,7 @@ fun PyServerMediaApp() {
                                     style = MaterialTheme.typography.bodySmall
                                 )
                                 Text(
-                                    "Starting the service verifies the Bearer token against /api/bridge/next-job before polling. Background jobs can use bundled yt-dlp for supported site URLs and playlists. YouTube EJS may fail because QuickJS is not bundled.",
+                                    "Starting the service verifies the Bearer token against /api/bridge/next-job before polling. Background jobs can use bundled yt-dlp with QuickJS-NG for YouTube challenges and aria2 for supported HTTP(S) transfers. Login, regional restrictions and upstream changes can still block downloads.",
                                     color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall
                                 )
                                 OutlinedButton(

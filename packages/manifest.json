@@ -1,13 +1,13 @@
 {
   "schemaVersion": 2,
-  "catalogVersion": 8,
-  "updatedAtUtc": "2026-11-25T12:08:00Z",
+  "catalogVersion": 9,
+  "updatedAtUtc": "2026-11-27T05:55:00Z",
   "runtime": {
     "applicationId": "com.pyserver.v2",
     "targetSdk": 35,
     "delivery": "APK-bundled",
-    "status": "embedded-cpython-ytdlp-and-lgpl-ffmpeg",
-    "note": "CPython, yt-dlp, yt-dlp-ejs and Jsoup are pinned build dependencies packaged into the APK. No app runtime package downloads are performed. EJS challenge solving requires a compatible JavaScript runtime that is not yet bundled. FFmpeg/FFprobe JNI are provided by the pinned LGPL AAR; a yt-dlp-compatible ffmpeg executable is not provided."
+    "status": "embedded-cpython-ytdlp-ejs-quickjs-aria2-and-lgpl-ffmpeg",
+    "note": "CPython, yt-dlp, yt-dlp-ejs, QuickJS-NG qjs, aria2c, and Jsoup are bundled for arm64-v8a and x86_64. The qjs and aria2c executables are installed into app-private storage, self-tested, and connected to yt-dlp. No runtime package downloads are performed. aria2c is used for supported HTTP(S) transfers; segmented HLS/DASH continues using yt-dlp's internal downloader. FFmpeg/FFprobe JNI are provided by the pinned LGPL AAR; a yt-dlp-compatible ffmpeg executable is not provided."
   },
   "nativeMediaRuntime": {
     "coordinate": "dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7",
@@ -151,18 +151,18 @@
       "name": "yt-dlp-ejs",
       "version": "0.8.0",
       "category": "Media",
-      "description": "EJS challenge solver scripts are bundled; no compatible QuickJS, Deno or Node runtime is included, so challenge solving is not guaranteed.",
+      "description": "EJS challenge solver scripts are bundled and yt-dlp is configured to use the bundled QuickJS-NG qjs runtime; platform restrictions and upstream changes can still prevent extraction.",
       "bundled": true,
       "license": "Unlicense plus bundled MIT/ISC components"
     },
     {
       "id": "quickjs",
       "name": "QuickJS",
-      "version": null,
+      "version": "QuickJS-NG 0.12.1",
       "category": "Runtime",
-      "description": "Not bundled. yt-dlp QuickJS command/runtime integration has not been validated for Android.",
-      "bundled": false,
-      "license": "Not applicable"
+      "description": "qjs command-line runtime bundled for arm64-v8a and x86_64 and selected explicitly by yt-dlp for EJS challenges. Runtime startup is self-tested on device.",
+      "bundled": true,
+      "license": "MIT"
     },
     {
       "id": "jsoup",
@@ -185,11 +185,11 @@
     {
       "id": "aria2",
       "name": "aria2",
-      "version": "1.37.0-3",
+      "version": "1.37.0",
       "category": "Networking",
-      "description": "Not included; yt-dlp uses its internal downloader.",
-      "bundled": false,
-      "license": "GPL-2.0-or-later"
+      "description": "Android aria2c command-line binaries bundled for arm64-v8a and x86_64. yt-dlp uses bounded multi-connection downloads for supported HTTP(S) streams; native handling remains enabled for HLS/DASH.",
+      "bundled": true,
+      "license": "GPL-2.0-or-later; full license in third_party_licenses/GPL-2.0.txt"
     },
     {
       "id": "deno",
@@ -247,8 +247,8 @@
     }
   ],
   "appVersion": {
-    "versionCode": 14,
-    "versionName": "2.8.4"
+    "versionCode": 15,
+    "versionName": "2.8.5"
   },
   "updateSource": {
     "provider": "GitHub Releases",
