@@ -1,260 +1,54 @@
 {
-  "schemaVersion": 2,
-  "catalogVersion": 9,
-  "updatedAtUtc": "2026-11-27T05:55:00Z",
+  "schemaVersion": 3,
+  "catalogVersion": 10,
+  "updatedAtUtc": "2026-11-27T06:54:00Z",
+  "appVersion": {
+    "versionCode": 16,
+    "versionName": "2.8.6"
+  },
   "runtime": {
     "applicationId": "com.pyserver.v2",
     "targetSdk": 35,
-    "delivery": "APK-bundled",
-    "status": "embedded-cpython-ytdlp-ejs-quickjs-aria2-and-lgpl-ffmpeg",
-    "note": "CPython, yt-dlp, yt-dlp-ejs, QuickJS-NG qjs, aria2c, and Jsoup are bundled for arm64-v8a and x86_64. The qjs and aria2c executables are installed into app-private storage, self-tested, and connected to yt-dlp. No runtime package downloads are performed. aria2c is used for supported HTTP(S) transfers; segmented HLS/DASH continues using yt-dlp's internal downloader. FFmpeg/FFprobe JNI are provided by the pinned LGPL AAR; a yt-dlp-compatible ffmpeg executable is not provided."
-  },
-  "nativeMediaRuntime": {
-    "coordinate": "dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.7",
-    "sha256": "c3cbc81d498175fd2aa69ee2dfe7dafbf519052a96283c2568fe5b3b16618456",
-    "license": "LGPL-3.0 artifact metadata; see app/src/main/assets/ffmpegkit-licenses/ and THIRD_PARTY_NOTICES.md",
-    "abis": [
-      "arm64-v8a",
-      "x86_64"
+    "apkTarget": "smallest practical base APK; exact 10 MB is not guaranteed",
+    "embedded": [
+      "CPython 3.13 via Chaquopy 17.2.0",
+      "yt-dlp 2026.11.23",
+      "yt-dlp-ejs 0.8.0",
+      "Jsoup 1.24.1",
+      "Jetpack Compose, Media3 ExoPlayer, Coil and WorkManager"
     ],
-    "delivery": "APK-only",
-    "includesFFmpegAndFFprobeJNI": true,
-    "ytDlpMergeAdapter": false,
-    "restrictedFeaturesExcluded": [
-      "libx264",
-      "libx265",
-      "libfdk-aac"
+    "removed": [
+      "FFmpegKit full AAR: not connected as a yt-dlp ffmpeg merge adapter",
+      "Material Icons Extended: UI uses lightweight text glyphs instead"
     ],
-    "libraries": [
-      {
-        "id": "libavcodec",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libavformat",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libavutil",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libavfilter",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libswscale",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libswresample",
-        "bundled": true,
-        "packaging": "shared library"
-      },
-      {
-        "id": "libass",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libx264",
-        "bundled": false,
-        "reason": "GPL build not used; commercial license not obtained"
-      },
-      {
-        "id": "libx265",
-        "bundled": false,
-        "reason": "GPL build not used; commercial license not obtained"
-      },
-      {
-        "id": "libvpx",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libwebp",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libopus",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libmp3lame",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libvorbis",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg feature"
-      },
-      {
-        "id": "libfdk-aac",
-        "bundled": false,
-        "reason": "license and patent clearance incomplete"
-      },
-      {
-        "id": "zlib",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg build option"
-      },
-      {
-        "id": "bzip2",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg build option"
-      },
-      {
-        "id": "liblzma",
-        "bundled": false,
-        "status": "runtime-probed",
-        "packaging": "FFmpeg build option"
-      }
-    ]
+    "remoteRuntime": {
+      "delivery": "GitHub Releases runtime-manifest.json",
+      "installedPath": "app-private noBackupFilesDir/lib",
+      "components": [
+        "QuickJS-NG qjs 0.12.1 for yt-dlp EJS",
+        "aria2c 1.37.0 for supported HTTP(S) transfers"
+      ],
+      "abis": ["arm64-v8a", "x86_64"],
+      "integrity": "Manifest schema, HTTPS GitHub origin, exact size, SHA-256 and executable self-tests are checked before atomic activation; previous version files are retained for rollback.",
+      "limitations": "The first install requires network access and a published tagged GitHub Release. QuickJS/aria2 do not provide universal site access or separate-stream merging; yt-dlp extractor, login, DRM, regional and upstream restrictions still apply."
+    },
+    "updateSource": {
+      "provider": "GitHub Releases",
+      "repository": "https://github.com/treeklyz-afk/Idownld",
+      "apkCheck": "GitHub latest-release API on app startup and Settings",
+      "runtimeManifest": "https://github.com/treeklyz-afk/Idownld/releases/latest/download/runtime-manifest.json",
+      "apkInstall": "User-controlled Android browser/download/install; no silent package installation"
+    }
   },
   "packages": [
-    {
-      "id": "python",
-      "name": "CPython",
-      "version": "3.13 via Chaquopy 17.2.0",
-      "category": "Runtime",
-      "description": "Embedded CPython runtime included in APK for arm64-v8a and x86_64.",
-      "bundled": true,
-      "license": "PSF-2.0; included component notices apply"
-    },
-    {
-      "id": "python-yt-dlp",
-      "name": "yt-dlp",
-      "version": "2026.11.23",
-      "category": "Media",
-      "description": "Python package bundled in APK for supported site extraction, format analysis and downloads; site availability varies. Separate-stream merging is unavailable without an ffmpeg CLI adapter.",
-      "bundled": true,
-      "license": "Unlicense"
-    },
-    {
-      "id": "yt-dlp-ejs",
-      "name": "yt-dlp-ejs",
-      "version": "0.8.0",
-      "category": "Media",
-      "description": "EJS challenge solver scripts are bundled and yt-dlp is configured to use the bundled QuickJS-NG qjs runtime; platform restrictions and upstream changes can still prevent extraction.",
-      "bundled": true,
-      "license": "Unlicense plus bundled MIT/ISC components"
-    },
-    {
-      "id": "quickjs",
-      "name": "QuickJS",
-      "version": "QuickJS-NG 0.12.1",
-      "category": "Runtime",
-      "description": "qjs command-line runtime bundled for arm64-v8a and x86_64 and selected explicitly by yt-dlp for EJS challenges. Runtime startup is self-tested on device.",
-      "bundled": true,
-      "license": "MIT"
-    },
-    {
-      "id": "jsoup",
-      "name": "Jsoup",
-      "version": "1.24.1",
-      "category": "Web parsing",
-      "description": "JVM HTML parsing fallback for static Open Graph and video metadata; does not execute JavaScript.",
-      "bundled": true,
-      "license": "MIT"
-    },
-    {
-      "id": "ffmpeg",
-      "name": "FFmpeg",
-      "version": "FFmpegKit 8.1.7",
-      "category": "Media",
-      "description": "FFmpeg and FFprobe JNI APIs bundled in APK for arm64-v8a and x86_64; LGPL artifact. No yt-dlp CLI adapter; GPL codecs excluded.",
-      "bundled": true,
-      "license": "LGPL-3.0 artifact; bundled notices apply"
-    },
-    {
-      "id": "aria2",
-      "name": "aria2",
-      "version": "1.37.0",
-      "category": "Networking",
-      "description": "Android aria2c command-line binaries bundled for arm64-v8a and x86_64. yt-dlp uses bounded multi-connection downloads for supported HTTP(S) streams; native handling remains enabled for HLS/DASH.",
-      "bundled": true,
-      "license": "GPL-2.0-or-later; full license in third_party_licenses/GPL-2.0.txt"
-    },
-    {
-      "id": "deno",
-      "name": "Deno",
-      "version": null,
-      "category": "Runtime",
-      "description": "Not included; no JavaScript challenge runtime is bundled.",
-      "bundled": false,
-      "license": "MIT"
-    },
-    {
-      "id": "node",
-      "name": "Node.js",
-      "version": null,
-      "category": "Runtime",
-      "description": "Not included; no JavaScript challenge runtime is bundled.",
-      "bundled": false,
-      "license": "MIT"
-    },
-    {
-      "id": "coil-compose",
-      "name": "Coil Compose",
-      "version": "2.7.0",
-      "category": "Images",
-      "description": "Compose image loading for remote media thumbnails; images load only when enabled in settings.",
-      "bundled": true,
-      "license": "Apache-2.0"
-    },
-    {
-      "id": "media3-exoplayer",
-      "name": "AndroidX Media3 ExoPlayer",
-      "version": "1.5.1",
-      "category": "Video playback",
-      "description": "ExoPlayer and PlayerView for user-initiated preview playback and local video history.",
-      "bundled": true,
-      "license": "Apache-2.0"
-    },
-    {
-      "id": "work-runtime-ktx",
-      "name": "AndroidX WorkManager KTX",
-      "version": "2.10.1",
-      "category": "Background work",
-      "description": "Durable queued downloads, retry scheduling and foreground progress notifications. OS battery/network policies may defer tasks; uninstall removes active work.",
-      "bundled": true,
-      "license": "Apache-2.0"
-    },
-    {
-      "id": "compose-material-icons-extended",
-      "name": "Jetpack Compose Material Icons Extended",
-      "version": "Compose BOM 2024.11.00",
-      "category": "UI",
-      "description": "Icons used by the Compose Android interface.",
-      "bundled": true,
-      "license": "Apache-2.0"
-    }
-  ],
-  "appVersion": {
-    "versionCode": 15,
-    "versionName": "2.8.5"
-  },
-  "updateSource": {
-    "provider": "GitHub Releases",
-    "repository": "https://github.com/treeklyz-afk/Idownld",
-    "api": "https://api.github.com/repos/treeklyz-afk/Idownld/releases/latest",
-    "automaticInstall": false,
-    "note": "Checks public releases; APK installation remains a user-controlled Android action."
-  }
+    {"id":"python","name":"CPython","version":"3.13 via Chaquopy 17.2.0","category":"Runtime","delivery":"APK","bundled":true,"license":"PSF-2.0; component notices apply"},
+    {"id":"yt-dlp","name":"yt-dlp","version":"2026.11.23","category":"Media extraction","delivery":"APK","bundled":true,"license":"Unlicense"},
+    {"id":"yt-dlp-ejs","name":"yt-dlp-ejs","version":"0.8.0","category":"Challenge scripts","delivery":"APK","bundled":true,"license":"Unlicense and included component notices"},
+    {"id":"quickjs","name":"QuickJS-NG qjs","version":"0.12.1","category":"EJS runtime","delivery":"GitHub Release into app-private /lib","bundled":false,"license":"MIT"},
+    {"id":"aria2","name":"aria2c","version":"1.37.0","category":"HTTP(S) transfer helper","delivery":"GitHub Release into app-private /lib","bundled":false,"license":"GPL-2.0-or-later"},
+    {"id":"jsoup","name":"Jsoup","version":"1.24.1","category":"Web parsing fallback","delivery":"APK","bundled":true,"license":"MIT"},
+    {"id":"media3-exoplayer","name":"AndroidX Media3 ExoPlayer","version":"1.5.1","category":"Playback","delivery":"APK","bundled":true,"license":"Apache-2.0"},
+    {"id":"coil-compose","name":"Coil Compose","version":"2.7.0","category":"Thumbnails","delivery":"APK","bundled":true,"license":"Apache-2.0"},
+    {"id":"work-runtime-ktx","name":"AndroidX WorkManager KTX","version":"2.10.1","category":"Background downloads","delivery":"APK","bundled":true,"license":"Apache-2.0"}
+  ]
 }

@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARIA2_TAG="release-1.37.0"
 SOURCE_DIR="/tmp/aria2-android-source"
-OUT_DIR="$ROOT/app/src/main/assets/runtimes"
+OUT_DIR="$ROOT/build/runtime-assets"
 
 rm -rf "$SOURCE_DIR"
 git clone --depth 1 --branch "$ARIA2_TAG" https://github.com/aria2/aria2.git "$SOURCE_DIR"

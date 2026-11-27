@@ -35,13 +35,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.History
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -84,9 +77,14 @@ fun EnhancedPyServerApp() {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("pyserver2_settings", Context.MODE_PRIVATE) }
     var entry by rememberSaveable { mutableStateOf("splash") }
+    var runtimeProgress by remember { mutableFloatStateOf(0f) }
+    var runtimeStatus by rememberSaveable { mutableStateOf("Preparing runtime…") }
+    var runtimeError by rememberSaveable { mutableStateOf("") }
+    var runtimeRetry by remember { mutableIntStateOf(0) }
+    fun openMainOrRuntime() { entry = if (RuntimePackageManager.hasInstalled(context)) "app" else "runtime" }
     fun finishPermissionSetup() {
         preferences.edit().putBoolean("permission_setup_complete", true).apply()
-        entry = if (preferences.getBoolean("onboarding_complete", false)) "app" else "onboarding"
+        entry = if (preferences.getBoolean("onboarding_complete", false)) { if (RuntimePackageManager.hasInstalled(context)) "app" else "runtime" } else "onboarding"
     }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
         finishPermissionSetup()
@@ -96,12 +94,37 @@ fun EnhancedPyServerApp() {
         entry = when {
             !preferences.getBoolean("permission_setup_complete", false) -> "permissions"
             !preferences.getBoolean("onboarding_complete", false) -> "onboarding"
-            else -> "app"
+            else -> if (RuntimePackageManager.hasInstalled(context)) "app" else "runtime"
+        }
+    }
+    LaunchedEffect(entry, runtimeRetry) {
+        if (entry != "runtime") return@LaunchedEffect
+        RuntimePackageManager.migrateLegacy(context)
+        if (RuntimePackageManager.hasInstalled(context)) { entry = "app"; return@LaunchedEffect }
+        runtimeError = ""
+        runtimeProgress = 0f
+        runtimeStatus = "Checking GitHub runtime manifest…"
+        try {
+            val manifest = withContext(Dispatchers.IO) { RuntimePackageManager.fetchManifest() }
+            runtimeStatus = "Downloading ${manifest.runtimeVersion} for this device…"
+            withContext(Dispatchers.IO) {
+                RuntimePackageManager.install(context, manifest) { component, done, total ->
+                    Handler(Looper.getMainLooper()).post {
+                        runtimeStatus = "Downloading $component • ${formatByteCount(done)} / ${formatByteCount(total)}"
+                        runtimeProgress = if (total > 0L) done.toFloat() / total.toFloat() else 0f
+                    }
+                }
+            }
+            runtimeStatus = "Runtime ready"
+            entry = "app"
+        } catch (error: Throwable) {
+            runtimeError = error.message ?: "Runtime setup failed. Check your internet connection and try again."
         }
     }
     MaterialTheme(colorScheme = darkColorScheme(primary = Cyan, secondary = Violet, background = Ink, surface = Panel, onPrimary = Ink, onSecondary = Color.White, onBackground = Color.White, onSurface = Color.White)) {
         when (entry) {
             "splash" -> SplashPage()
+            "runtime" -> RuntimeSetupPage(runtimeStatus, runtimeProgress, runtimeError, onRetry = { runtimeRetry++ }, onContinueOffline = { entry = "app" })
             "permissions" -> PermissionSetupPage(
                 notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled(),
                 onEnableNotifications = {
@@ -116,7 +139,7 @@ fun EnhancedPyServerApp() {
             )
             "onboarding" -> OnboardingPage(onDone = {
                 preferences.edit().putBoolean("onboarding_complete", true).apply()
-                entry = "app"
+                openMainOrRuntime()
             })
             else -> MainNavigation(preferences)
         }
@@ -163,6 +186,23 @@ private fun PermissionSetupPage(
             Text(if (notificationsEnabled || Build.VERSION.SDK_INT < 33) "Continue" else "Enable notifications & continue", fontWeight = FontWeight.Bold)
         }
         TextButton(onClick = onContinueWithoutNotifications, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Continue without notification permission", color = TextMuted) }
+    }
+}
+
+@Composable
+private fun RuntimeSetupPage(status: String, progress: Float, error: String, onRetry: () -> Unit, onContinueOffline: () -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(22.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text("Idownld", color = Cyan, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(12.dp))
+        Text("Preparing download runtime", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("QuickJS and aria2 are installed from a versioned GitHub manifest into app-private /lib. Each executable is size/hash checked and self-tested before activation.", color = TextMuted, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(vertical = 12.dp))
+        LinearProgressIndicator(progress = { progress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth().height(7.dp).clip(CircleShape), color = Cyan, trackColor = PanelRaised)
+        Text(status, color = TextMuted, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 10.dp))
+        if (error.isNotBlank()) {
+            Text(error, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 12.dp))
+            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) { Text("Retry runtime setup", fontWeight = FontWeight.Bold) }
+            TextButton(onClick = onContinueOffline) { Text("Continue offline (analysis unavailable)", color = TextMuted) }
+        }
     }
 }
 
@@ -224,6 +264,13 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
     var updateBusy by rememberSaveable { mutableStateOf(false) }
     var updateMessage by rememberSaveable { mutableStateOf("Release check not run yet") }
     var release by remember { mutableStateOf<LatestGithubRelease?>(null) }
+    var showAppUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    var runtimeMessage by rememberSaveable { mutableStateOf("Runtime manifest check not run yet") }
+    var runtimeManifest by remember { mutableStateOf<RuntimePackageManifest?>(null) }
+    var showRuntimeUpdateDialog by rememberSaveable { mutableStateOf(false) }
+    var runtimeUpdateBusy by rememberSaveable { mutableStateOf(false) }
+    var runtimeUpdateProgress by remember { mutableFloatStateOf(0f) }
+    var runtimeUpdateDetail by rememberSaveable { mutableStateOf("") }
     var nativeReport by remember { mutableStateOf<NativeRuntimeReport?>(null) }
     var gatewayUrl by rememberSaveable { mutableStateOf("") }
     var gatewayToken by remember { mutableStateOf("") }
@@ -333,6 +380,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
             runCatching { withContext(Dispatchers.IO) { GitHubUpdateChecker.checkLatestRelease() } }
                 .onSuccess { found ->
                     release = found
+                    showAppUpdateDialog = found != null && isNewerRelease(found.tag, APP_VERSION_NAME)
                     updateMessage = when {
                         found == null -> "Abhi koi public GitHub Release nahi mila. Releases page par APK publish hone ke baad update yahan dikhega."
                         isNewerRelease(found.tag, APP_VERSION_NAME) -> "Update available: ${found.title} (${found.tag}) • installed $APP_VERSION_NAME"
@@ -342,6 +390,52 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                 .onFailure { updateMessage = "Update check failed: ${it.message ?: "network error"}" }
             updateBusy = false
         }
+    }
+
+    fun checkRuntimeManifest() {
+        runtimeMessage = "Checking GitHub runtime manifest…"
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { RuntimePackageManager.fetchManifest() } }
+                .onSuccess { manifest ->
+                    runtimeManifest = manifest
+                    if (RuntimePackageManager.updateAvailable(context, manifest)) {
+                        runtimeMessage = "Runtime update available: ${manifest.runtimeVersion} (${manifest.releaseTag})"
+                        showRuntimeUpdateDialog = true
+                    } else runtimeMessage = "Runtime is up to date: ${manifest.runtimeVersion}"
+                }
+                .onFailure { runtimeMessage = "Runtime check unavailable: ${it.message ?: "network error"}" }
+        }
+    }
+
+    fun installRuntimeUpdate() {
+        runtimeUpdateBusy = true
+        runtimeUpdateProgress = 0f
+        runtimeUpdateDetail = "Preparing verified runtime download…"
+        scope.launch {
+            runCatching {
+                val manifest = runtimeManifest ?: withContext(Dispatchers.IO) { RuntimePackageManager.fetchManifest() }
+                runtimeManifest = manifest
+                withContext(Dispatchers.IO) {
+                    RuntimePackageManager.install(context, manifest) { component, done, total ->
+                        Handler(Looper.getMainLooper()).post {
+                            runtimeUpdateProgress = if (total > 0L) done.toFloat() / total.toFloat() else 0f
+                            runtimeUpdateDetail = "$component • ${formatByteCount(done)} / ${formatByteCount(total)}"
+                        }
+                    }
+                }
+            }.onSuccess {
+                runtimeMessage = "Runtime ready: ${it.version}"
+                showRuntimeUpdateDialog = false
+            }.onFailure {
+                runtimeMessage = "Runtime update failed: ${it.message ?: "unknown error"}"
+            }
+            runtimeUpdateBusy = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        checkGithubRelease()
+        checkRuntimeManifest()
     }
 
     BackHandler(enabled = flow != "home") {
@@ -357,7 +451,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                         NavigationBarItem(
                             selected = destination == key,
                             onClick = { destination = key },
-                            icon = { Icon(imageVector = when (key) { "home" -> Icons.Filled.Home; "downloads" -> Icons.Filled.Download; "players" -> Icons.Filled.PlayArrow; "history" -> Icons.Filled.History; else -> Icons.Filled.Settings }, contentDescription = label, tint = if (destination == key) Cyan else TextMuted) },
+                            icon = { Text(when (key) { "home" -> "⌂"; "downloads" -> "↓"; "players" -> "▶"; "history" -> "◷"; else -> "⚙" }, color = if (destination == key) Cyan else TextMuted, style = MaterialTheme.typography.titleLarge) },
                             label = { Text(if (key == "history") "Library" else label, maxLines = 1, softWrap = false) }
                         )
                     }
@@ -410,13 +504,7 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     onUrl = { mediaUrl = it },
                     onAnalyze = ::beginAnalysis,
                     busy = analysisStage in 0..4 && flow == "analysis",
-                    error = analysisError,
-                    onHistory = { destination = "history" },
-                    onSettings = { destination = "settings" },
-                    onDiagnostics = { context.startActivity(Intent(context, CrashDebugActivity::class.java)) },
-                    onQueue = { destination = "downloads" },
-                    onPlayers = { destination = "players" },
-                    onLibrary = { destination = "history" }
+                    error = analysisError
                 )
                 destination == "downloads" -> DownloadsPage(
                     tasks = queueTasks,
@@ -466,6 +554,10 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     release = release,
                     onCheckUpdates = ::checkGithubRelease,
                     onOpenRelease = { url -> openUrl(context, url) },
+                    runtimeVersion = RuntimePackageManager.installedVersion(context) ?: "not installed",
+                    runtimeMessage = runtimeMessage,
+                    runtimeUpdateBusy = runtimeUpdateBusy,
+                    onCheckRuntime = ::checkRuntimeManifest,
                     gatewayUrl = gatewayUrl,
                     gatewayToken = gatewayToken,
                     gatewayStatus = gatewayStatus,
@@ -478,13 +570,37 @@ private fun MainNavigation(preferences: android.content.SharedPreferences) {
                     nativeReport = nativeReport,
                     onProbeNative = {
                         busy = true
-                        scope.launch { nativeReport = withContext(Dispatchers.IO) { NativeMediaRuntime.probe() }; busy = false }
+                        scope.launch { nativeReport = withContext(Dispatchers.IO) { NativeMediaRuntime.probe(context) }; busy = false }
                     },
                     onOpenDiagnostics = { runCatching { context.startActivity(Intent(context, CrashDebugActivity::class.java)) } },
                     nativeBusy = busy
                 )
             }
         }
+    }
+    if (showAppUpdateDialog && release != null) {
+        val latest = release!!
+        AlertDialog(
+            onDismissRequest = { showAppUpdateDialog = false },
+            title = { Text("Idownld ${latest.tag} is available") },
+            text = { Text("${latest.title}\n\n${latest.notes.ifBlank { "A new APK is available from GitHub Releases." }}\n\nAndroid will ask you to review and install the downloaded APK.") },
+            confirmButton = { TextButton(onClick = { showAppUpdateDialog = false; openUrl(context, latest.apkUrl ?: latest.pageUrl) }) { Text("View APK") } },
+            dismissButton = { TextButton(onClick = { showAppUpdateDialog = false }) { Text("Later") } }
+        )
+    }
+    if (showRuntimeUpdateDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!runtimeUpdateBusy) showRuntimeUpdateDialog = false },
+            title = { Text(if (runtimeUpdateBusy) "Updating native helpers" else "Runtime update available") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(if (runtimeUpdateBusy) runtimeUpdateDetail else "${runtimeManifest?.runtimeVersion ?: "Verified helper binaries"} is available. Downloads are SHA-256 checked and tested before the existing runtime is replaced.")
+                    if (runtimeUpdateBusy) LinearProgressIndicator(progress = { runtimeUpdateProgress.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth(), color = Cyan)
+                }
+            },
+            confirmButton = { TextButton(onClick = ::installRuntimeUpdate, enabled = !runtimeUpdateBusy) { Text(if (runtimeUpdateBusy) "Installing…" else "Download update") } },
+            dismissButton = { if (!runtimeUpdateBusy) TextButton(onClick = { showRuntimeUpdateDialog = false }) { Text("Later") } }
+        )
     }
 }
 
@@ -494,70 +610,21 @@ private fun HomePage(
     onUrl: (String) -> Unit,
     onAnalyze: () -> Unit,
     busy: Boolean,
-    error: String,
-    onHistory: () -> Unit,
-    onSettings: () -> Unit,
-    onDiagnostics: () -> Unit,
-    onQueue: () -> Unit,
-    onPlayers: () -> Unit,
-    onLibrary: () -> Unit
+    error: String
 ) {
-    Column(Modifier.fillMaxSize().widthIn(max = 680.dp).verticalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Idownld", color = Cyan, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Ultimate media downloader", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
-            }
-            Box(Modifier.size(48.dp).clip(CircleShape).background(Brush.linearGradient(listOf(Cyan, Violet))), contentAlignment = Alignment.Center) { Text("⇩", color = Ink, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black) }
+    Column(Modifier.fillMaxSize().widthIn(max = 620.dp).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 28.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Spacer(Modifier.height(12.dp))
+        Text("Idownld", color = Cyan, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Paste a media link to see available formats.", color = TextMuted, style = MaterialTheme.typography.bodyMedium)
+        OutlinedTextField(
+            value = url, onValueChange = onUrl, modifier = Modifier.fillMaxWidth(), singleLine = true,
+            label = { Text("Media URL") }, placeholder = { Text("https://…") }, shape = RoundedCornerShape(18.dp),
+            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Cyan, focusedLabelColor = Cyan, cursorColor = Cyan)
+        )
+        Button(onClick = onAnalyze, enabled = !busy, modifier = Modifier.fillMaxWidth().height(54.dp), shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
+            if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Ink) else Text("Analyze", fontWeight = FontWeight.Bold)
         }
-        Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth().border(1.dp, Violet.copy(alpha = 0.55f), RoundedCornerShape(24.dp))) {
-            Row(Modifier.fillMaxWidth().background(Brush.horizontalGradient(listOf(Color(0xFF24054B), Color(0xFF101B37)))).padding(18.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text("Your ultimate media downloader", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text("Fast • Secure • Organized", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-                }
-                Text("▶", color = Violet, style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Black)
-            }
-        }
-        Card(colors = CardDefaults.cardColors(containerColor = Panel), shape = RoundedCornerShape(26.dp)) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(15.dp)) {
-                Text("Analyze a link", color = Color.White, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                Text("Video, audio, image or playlist URL", color = TextMuted)
-                OutlinedTextField(
-                    value = url, onValueChange = onUrl, modifier = Modifier.fillMaxWidth(), singleLine = true,
-                    label = { Text("https://…") }, shape = RoundedCornerShape(16.dp),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Cyan, focusedLabelColor = Cyan, cursorColor = Cyan)
-                )
-                Button(onClick = onAnalyze, enabled = !busy, modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(18.dp), colors = ButtonDefaults.buttonColors(containerColor = Cyan, contentColor = Ink)) {
-                    if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Ink) else Text("Analyze media", fontWeight = FontWeight.Bold)
-                }
-                if (error.isNotBlank()) Text(error, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall)
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            QuickAction("Download history", "◷", onHistory, Modifier.weight(1f))
-            QuickAction("Preferences", "⚙", onSettings, Modifier.weight(1f))
-        }
-        OutlinedButton(onClick = onDiagnostics, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
-            Text("Crash log & diagnostics", color = Cyan, fontWeight = FontWeight.SemiBold)
-        }
-        Text("Quick access", color = Color.White, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            QuickAction("Video", "▶", onPlayers, Modifier.weight(1f))
-            QuickAction("Audio", "♫", onPlayers, Modifier.weight(1f))
-            QuickAction("Images", "▧", onLibrary, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            QuickAction("All media", "▦", onLibrary, Modifier.weight(1f))
-            QuickAction("Queue", "⇩", onQueue, Modifier.weight(1f))
-            QuickAction("Settings", "⚙", onSettings, Modifier.weight(1f))
-        }
-        Card(colors = CardDefaults.cardColors(containerColor = PanelRaised), shape = RoundedCornerShape(20.dp)) {
-            Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Built for simple downloads", color = Color.White, fontWeight = FontWeight.SemiBold)
-                Text("Review formats, preview supported streams and track transfer progress. Availability depends on each site's access and extractor support.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-            }
-        }
+        if (error.isNotBlank()) Text(error, color = Color(0xFFFF9B9B), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -695,11 +762,11 @@ private fun FormatsPage(
                         val active = selected?.let { it.formatId == format.formatId && it.mediaType == format.mediaType } == true
                         Card(modifier = Modifier.fillMaxWidth().clickable { onSelect(format) }.border(1.dp, if (active) Cyan else Color.Transparent, RoundedCornerShape(16.dp)), colors = CardDefaults.cardColors(containerColor = if (active) PanelRaised else Panel), shape = RoundedCornerShape(16.dp)) {
                             Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(imageVector = if (format.mediaType == "audio") Icons.Filled.MusicNote else Icons.Filled.PlayArrow, contentDescription = if (format.mediaType == "audio") "Audio format" else "Video format", tint = if (format.mediaType == "audio") Violet else Cyan, modifier = Modifier.padding(end = 12.dp))
+                                Text(if (format.mediaType == "audio") "♫" else "▶", color = if (format.mediaType == "audio") Violet else Cyan, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(end = 12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(format.titleLabel, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(format.metaInfo, color = TextMuted, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                    Text(format.estimatedSizeBytes?.let(::formatByteCount) ?: "Estimated size unavailable", color = Cyan, style = MaterialTheme.typography.labelSmall)
+                                    val resolution = if (format.mediaType == "audio") "Audio" else if (format.height > 0) "${format.height}p" else "Video"
+                                    Text(resolution, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                                    Text(format.estimatedSizeBytes?.let(::formatByteCount) ?: "Size unavailable", color = Cyan, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                                 }
                                 RadioButton(selected = active, onClick = { onSelect(format) })
                             }
@@ -946,6 +1013,10 @@ private fun SettingsPage(
     release: LatestGithubRelease?,
     onCheckUpdates: () -> Unit,
     onOpenRelease: (String) -> Unit,
+    runtimeVersion: String,
+    runtimeMessage: String,
+    runtimeUpdateBusy: Boolean,
+    onCheckRuntime: () -> Unit,
     gatewayUrl: String,
     gatewayToken: String,
     gatewayStatus: String,
@@ -1007,15 +1078,18 @@ private fun SettingsPage(
             }
             Text("Token is verified against the protected gateway before polling. Only use a gateway URL you trust.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
         }
-        SettingsGroup("Libraries & diagnostics", "Bundled runtime and crash report") {
+        SettingsGroup("Libraries & diagnostics", "App-private helper runtime and crash report") {
             OutlinedButton(onClick = onOpenDiagnostics, modifier = Modifier.fillMaxWidth()) { Text("Open crash log / diagnostics", color = Cyan) }
             Text("Recent unexpected app crashes are saved locally in the diagnostics screen. Logs can include sensitive link data.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-            Text(nativeReport?.summary ?: "Inspect FFmpeg / FFprobe JNI availability in this APK.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
-            OutlinedButton(onClick = onProbeNative, enabled = !nativeBusy, modifier = Modifier.fillMaxWidth()) { Text(if (nativeBusy) "Checking…" else "Inspect bundled libraries", color = Cyan) }
+            Text("Installed runtime: $runtimeVersion • ${RuntimePackageManager.installed(context)?.abi ?: "ABI pending"}", color = Cyan, style = MaterialTheme.typography.bodySmall)
+            Text(runtimeMessage, color = TextMuted, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onCheckRuntime, enabled = !runtimeUpdateBusy, modifier = Modifier.fillMaxWidth()) { Text(if (runtimeUpdateBusy) "Installing verified runtime…" else "Check helper updates", color = Cyan) }
+            Text(nativeReport?.summary ?: "QuickJS and aria2 are downloaded from GitHub Releases only when required, verified against size and SHA-256, then installed under app-private /lib.", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onProbeNative, enabled = !nativeBusy, modifier = Modifier.fillMaxWidth()) { Text(if (nativeBusy) "Checking…" else "Inspect installed runtime", color = Cyan) }
             nativeReport?.let { report ->
-                Text("FFmpeg JNI: ${if (report.available) "available" else "not confirmed"} • detected optional features: ${report.featureLibraries.joinToString().ifBlank { "none" }}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
+                Text("Helpers: ${report.presentLibraries.joinToString().ifBlank { "not installed" }}", color = TextMuted, style = MaterialTheme.typography.bodySmall)
             }
-            Text("QuickJS-NG and aria2 are bundled for supported ABIs. Site access, login, regional restrictions and upstream changes may still prevent extraction. x264/x265 and FDK-AAC are excluded pending licensing decisions.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
+            Text("FFmpeg JNI was removed because it was not a yt-dlp merge backend. Helper updates require internet; supported sites and formats still depend on yt-dlp extractors and source-site restrictions.", color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall)
         }
         TextButton(onClick = { onOpenRelease(GITHUB_RELEASES_PAGE) }, modifier = Modifier.align(Alignment.CenterHorizontally)) { Text("Repository & release history", color = Cyan) }
     }

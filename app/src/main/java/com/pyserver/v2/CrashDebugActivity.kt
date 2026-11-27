@@ -18,15 +18,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.DeleteOutline
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -128,7 +123,7 @@ class CrashDebugActivity : ComponentActivity() {
                                 shape = RoundedCornerShape(17.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = ink)
                             ) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                                Text("▣", fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.padding(3.dp))
                                 Text(if (copied) "Copied" else "Copy log", fontWeight = FontWeight.Bold)
                             }
@@ -145,7 +140,7 @@ class CrashDebugActivity : ComponentActivity() {
                                 modifier = Modifier.weight(1f).height(52.dp),
                                 shape = RoundedCornerShape(17.dp)
                             ) {
-                                Icon(Icons.Filled.Share, contentDescription = null, tint = accent)
+                                Text("↗", color = accent, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.padding(3.dp))
                                 Text("Share log", color = accent, fontWeight = FontWeight.Bold)
                             }
@@ -157,7 +152,7 @@ class CrashDebugActivity : ComponentActivity() {
                                 enabled = log.isNotBlank(),
                                 shape = RoundedCornerShape(15.dp)
                             ) {
-                                Icon(Icons.Filled.DeleteOutline, contentDescription = null, tint = Color(0xFFFF9B9B))
+                                Text("×", color = Color(0xFFFF9B9B), fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.padding(3.dp))
                                 Text("Clear log", color = Color(0xFFFF9B9B))
                             }

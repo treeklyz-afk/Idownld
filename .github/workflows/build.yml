@@ -1,15 +1,17 @@
-name: Build PyServer 2.0 Standalone APK
+name: Build Idownld APK and runtime packages
 
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
     paths-ignore:
       - "packages/manifest.json"
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-apk:
@@ -42,18 +44,17 @@ jobs:
           echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
           SDKMANAGER="$(command -v sdkmanager || true)"
-          if [[ -z "$SDKMANAGER" ]]; then
-            SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
-          fi
+          if [[ -z "$SDKMANAGER" ]]; then SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"; fi
           "$SDKMANAGER" --install "ndk;27.2.12479018"
 
-      - name: Build bundled QuickJS-NG for supported ABIs
+      - name: Build QuickJS-NG for supported ABIs
         shell: bash
         run: |
           set -euo pipefail
           git clone --depth 1 --branch v0.12.1 https://github.com/quickjs-ng/quickjs.git /tmp/quickjs-ng
           NDK="$ANDROID_HOME/ndk/27.2.12479018"
-          mkdir -p app/src/main/assets/runtimes
+          rm -rf build/runtime-assets build/release-assets
+          mkdir -p build/runtime-assets build/release-assets
           for ABI in arm64-v8a x86_64; do
             BUILD_DIR="/tmp/qjs-build-$ABI"
             cmake -S /tmp/quickjs-ng -B "$BUILD_DIR" \
@@ -62,22 +63,57 @@ jobs:
               -DANDROID_PLATFORM=android-29 \
               -DCMAKE_BUILD_TYPE=Release
             cmake --build "$BUILD_DIR" --target qjs_exe --parallel 2
-            install -m 0755 "$BUILD_DIR/qjs" "app/src/main/assets/runtimes/qjs-$ABI"
-            "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -h "app/src/main/assets/runtimes/qjs-$ABI" | grep -E 'Class:|Machine:'
+            install -m 0755 "$BUILD_DIR/qjs" "build/runtime-assets/qjs-$ABI"
+            "$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf" -h "build/runtime-assets/qjs-$ABI" | grep -E 'Class:|Machine:'
           done
 
-      - name: Build bundled aria2c for supported ABIs
+      - name: Build aria2c for supported ABIs
         run: bash scripts/build-aria2-android.sh
 
-      - name: Build debug APK from tracked app sources
+      - name: Stage runtime assets and generate signed-by-hash manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ABI in arm64-v8a x86_64; do
+            install -m 0755 "build/runtime-assets/qjs-$ABI" "build/release-assets/qjs-$ABI"
+            install -m 0755 "build/runtime-assets/aria2c-$ABI" "build/release-assets/aria2c-$ABI"
+          done
+          install -m 0644 app/src/main/assets/third_party_licenses/QuickJS-NG-MIT.txt build/release-assets/QuickJS-NG-MIT.txt
+          install -m 0644 app/src/main/assets/third_party_licenses/GPL-2.0.txt build/release-assets/GPL-2.0.txt
+          VERSION="$(sed -n 's/^[[:space:]]*versionName = "\([^"]*\)"/\1/p' app/build.gradle.kts | head -n1)"
+          test -n "$VERSION"
+          python3 scripts/create-runtime-manifest.py --version "$VERSION" --assets-dir build/release-assets --output build/release-assets/runtime-manifest.json
+          python3 -m json.tool build/release-assets/runtime-manifest.json >/dev/null
+          (cd build/release-assets && sha256sum qjs-* aria2c-* runtime-manifest.json > SHA256SUMS.txt)
+
+      - name: Build debug APK
         run: |
           set -euo pipefail
           gradle --no-daemon --stacktrace assembleDebug
           test -s app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload APK artifact
+      - name: Upload APK and runtime release assets
         uses: actions/upload-artifact@v4
         with:
-          name: PyServer2-Standalone-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: Idownld-${{ github.ref_name }}-APK-and-runtime
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            build/release-assets/*
           if-no-files-found: error
+
+      - name: Publish GitHub Release for version tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Idownld ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            app/build/outputs/apk/debug/app-debug.apk
+            build/release-assets/runtime-manifest.json
+            build/release-assets/qjs-arm64-v8a
+            build/release-assets/qjs-x86_64
+            build/release-assets/aria2c-arm64-v8a
+            build/release-assets/aria2c-x86_64
+            build/release-assets/QuickJS-NG-MIT.txt
+            build/release-assets/GPL-2.0.txt
+            build/release-assets/SHA256SUMS.txt

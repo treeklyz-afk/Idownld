@@ -463,9 +463,9 @@ fun PyServerMediaApp() {
                             modifier = Modifier.fillMaxWidth().border(1.dp, borderSubtle, RoundedCornerShape(18.dp))
                         ) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text("Native media runtime", color = cyanAccent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("Helper runtime", color = cyanAccent, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    nativeReportState.value?.summary ?: "Inspect the libraries packaged in this APK. No native tools are downloaded at runtime.",
+                                    nativeReportState.value?.summary ?: "Inspect the verified QuickJS and aria2 helpers installed in app-private /lib.",
                                     color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodyMedium
                                 )
                                 Button(
@@ -473,7 +473,7 @@ fun PyServerMediaApp() {
                                         workingState.value = true
                                         loaderTitleState.value = "Inspecting APK native runtime..."
                                         scope.launch {
-                                            val report = withContext(Dispatchers.IO) { NativeMediaRuntime.probe() }
+                                            val report = withContext(Dispatchers.IO) { NativeMediaRuntime.probe(context) }
                                             nativeReportState.value = report.copy(presentLibraries = NativeMediaRuntime.inventory(context).map { it.id })
                                             workingState.value = false
                                             statusMsgState.value = report.summary
@@ -483,7 +483,7 @@ fun PyServerMediaApp() {
                                     shape = RoundedCornerShape(12.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = cyanAccent, contentColor = Color.Black),
                                     modifier = Modifier.fillMaxWidth()
-                                ) { Text("Inspect bundled runtime", fontWeight = FontWeight.Bold) }
+                                ) { Text("Inspect helper runtime", fontWeight = FontWeight.Bold) }
                                 nativeReportState.value?.ffmpegOutput?.takeIf { it.isNotBlank() }?.let {
                                     Text(it, color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 }
@@ -491,7 +491,7 @@ fun PyServerMediaApp() {
                                     Text("FFprobe JNI check:\n$it", color = Color(0xFF94A3B8), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                                 }
                                 Text(
-                                    "Bundled extractor: CPython 3.13, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0, QuickJS-NG 0.12.1, aria2 1.37.0 and Jsoup 1.24.1. YouTube challenge solving and parallel HTTP(S) transfer are enabled; site access rules, login, region and platform changes can still block a download.",
+                                    "APK includes CPython 3.13, yt-dlp 2026.11.23, yt-dlp-ejs 0.8.0 and Jsoup 1.24.1. QuickJS-NG and aria2 are fetched from a GitHub runtime manifest into app-private /lib. Site access rules, login, DRM, region and platform changes can still block a download.",
                                     color = Color(0xFFCBD5E1), style = MaterialTheme.typography.bodySmall
                                 )
                             }
@@ -512,7 +512,7 @@ fun PyServerMediaApp() {
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                     Text(library.name, color = Color.White, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        when { featurePresent -> "FEATURE ON"; sharedObjectPresent -> "SO IN APK"; !verified -> "CHECK"; else -> "NOT INCLUDED" },
+                                        when { featurePresent -> "READY"; sharedObjectPresent -> "READY"; !verified -> "CHECK"; else -> "NOT INSTALLED" },
                                         color = if (present) greenOk else Color(0xFFFFD580),
                                         style = MaterialTheme.typography.labelSmall,
                                         fontWeight = FontWeight.Bold
@@ -525,7 +525,7 @@ fun PyServerMediaApp() {
                     }
                     item {
                         Text(
-                            "QuickJS challenge support and aria2 parallel HTTP(S) downloads are bundled. Site access and platform changes may still block a source. FFmpegKit's JNI API is bundled, but no FFmpeg CLI adapter is provided, so yt-dlp uses muxed single-file video formats rather than merging separate streams. x264/x265 encoders are not included in this LGPL build; FDK-AAC remains excluded pending licensing and patent review.",
+                            "QuickJS assists supported yt-dlp EJS challenges and aria2 may accelerate supported HTTP(S) downloads. FFmpeg JNI was removed because it was not a yt-dlp merge backend; separate-stream merging and format conversion are not promised. Site access, login, DRM, regional availability and upstream changes still apply.",
                             color = Color(0xFFFFD580), style = MaterialTheme.typography.bodySmall
                         )
                     }
