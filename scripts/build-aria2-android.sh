@@ -16,6 +16,7 @@ for ABI in arm64-v8a x86_64; do
   cp "$DOCKERFILE" "$BUILD_DOCKERFILE"
   sed -i \
     -e 's/OPENSSL_VERSION=1.1.1w/OPENSSL_VERSION=3.5.9/' \
+    -e 's/ANDROID_NDK_HOME=\$NDK/ANDROID_NDK_HOME=\$NDK ANDROID_NDK_ROOT=\$NDK/' \
     -e 's/--with-libexpat/--without-libexpat/' \
     -e 's/--with-libcares/--without-libcares/' \
     -e 's/--with-libssh2/--without-libssh2/' \
